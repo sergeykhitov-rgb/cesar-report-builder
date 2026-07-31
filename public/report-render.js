@@ -10,23 +10,8 @@
   function nl2br(s) { return esc(s).replace(/\n/g, '<br>'); }
   function has(s) { return s != null && String(s).trim() !== ''; }
 
-  var LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 60" role="img" aria-label="CESAR SATELLITE">' +
-    stripes() +
-    '<text x="132" y="27" font-family="Onest, Arial, sans-serif" font-size="26" font-weight="800" letter-spacing="1" fill="#141519">CESAR</text>' +
-    '<text x="132" y="53" font-family="Onest, Arial, sans-serif" font-size="26" font-weight="800" letter-spacing="1" fill="#141519">SATELLITE</text></svg>';
-
-  function stripes() {
-    var out = '', tw = 13, pitch = 22, slant = 16, yTop = 6, yBot = 54, yMid = 35;
-    var om = slant * ((yBot - yMid) / (yBot - yTop));
-    for (var i = 0; i < 5; i++) {
-      var bx = i * pitch;
-      out += '<polygon points="' + (bx + slant) + ',' + yTop + ' ' + (bx + slant + tw) + ',' + yTop +
-        ' ' + (bx + om + tw).toFixed(2) + ',' + yMid + ' ' + (bx + om).toFixed(2) + ',' + yMid + '" fill="#FFCC00"/>';
-      out += '<polygon points="' + (bx + om).toFixed(2) + ',' + yMid + ' ' + (bx + om + tw).toFixed(2) + ',' + yMid +
-        ' ' + (bx + tw) + ',' + yBot + ' ' + bx + ',' + yBot + '" fill="#E30613"/>';
-    }
-    return out;
-  }
+  // Настоящий логотип CESAR SATELLITE (экспорт из Figma).
+  var LOGO = '<img src="/logo.png" alt="CESAR SATELLITE" style="width:100%;height:auto">';
 
   function row(k, v) {
     if (!has(v)) return '';
@@ -112,8 +97,13 @@
 
     var heroPhoto = d.heroPhoto || (d.events && d.events[0] && d.events[0].photo) || '';
     var card = objCard(d, false);
-    var hero = has(heroPhoto) ? '<div class="rp-hero"><img src="' + esc(heroPhoto) + '" alt=""></div>' : '';
-    var block = hero + (card ? '<div class="rp-objwrap' + (hero ? ' overlap' : '') + '">' + card + '</div>' : '');
+    var block;
+    if (has(heroPhoto)) {
+      var overlay = card ? '<div class="rp-objwrap overlay">' + card + '</div>' : '';
+      block = '<div class="rp-hero has-img"><img src="' + esc(heroPhoto) + '" alt="">' + overlay + '</div>';
+    } else {
+      block = card ? '<div class="rp-objwrap flow">' + card + '</div>' : '';
+    }
     return '<article class="report">' + head + block + stats(d) + events(d) + footer(d) + '</article>';
   }
 

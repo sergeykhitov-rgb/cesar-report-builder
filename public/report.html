@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Отчёт CESAR SATELLITE</title>
-  <link rel="icon" href="/logo-mark.svg">
+  <link rel="icon" href="/logo-mark.png">
   <link rel="stylesheet" href="/theme.css">
   <style>
     .viewer { min-height: 100vh; min-height: 100dvh; padding: clamp(16px, 4vw, 48px) 14px 60px; }
@@ -35,7 +35,7 @@
 <body>
   <div class="viewer">
     <div class="viewer-bar">
-      <img src="/logo.svg" alt="CESAR SATELLITE">
+      <img src="/logo.png" alt="CESAR SATELLITE">
       <button id="btnPrint" class="btn btn-ghost btn-sm" hidden>Скачать / Печать</button>
     </div>
     <div id="root">
@@ -58,7 +58,7 @@
         })
         .catch(function () {
           root.innerHTML =
-            '<div class="state"><img src="/logo-mark.svg" alt="">' +
+            '<div class="state"><img src="/logo-mark.png" alt="">' +
             '<h1>Отчёт не найден</h1><p>Возможно, ссылка неверна или отчёт был удалён.</p></div>';
         });
     })();
