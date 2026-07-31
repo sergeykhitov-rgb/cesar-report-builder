@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "report-builder", "runtimeExecutable": "node", "runtimeArgs": ["server.js"], "port": 4600 }
+  ]
+}

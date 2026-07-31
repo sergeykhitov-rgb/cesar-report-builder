@@ -1,0 +1,12 @@
+{
+  "name": "cesar-report-builder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CESAR SATELLITE — конструктор отчётов с публичными ссылками",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

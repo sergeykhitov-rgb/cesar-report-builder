@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>CESAR SATELLITE — Конструктор отчётов</title>
+  <link rel="icon" href="/logo-mark.svg">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/editor.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-l">
+      <img class="topbar-logo" src="/logo.svg" alt="CESAR SATELLITE">
+      <span class="topbar-sep"></span>
+      <span class="topbar-title">Конструктор отчётов</span>
+    </div>
+    <div class="topbar-r">
+      <button id="btnPreviewMobile" class="btn btn-ghost btn-sm mobile-only">Предпросмотр</button>
+      <button id="btnReset" class="btn btn-ghost btn-sm">Очистить</button>
+      <button id="btnGenerate" class="btn btn-red">Сгенерировать отчёт</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- ЛЕВО: форма -->
+    <section class="pane pane-form" id="paneForm">
+      <div class="form-scroll">
+
+        <div class="fgroup">
+          <div class="fgroup-h"><span class="label-red">Заголовок</span></div>
+          <label class="field"><span>Название отчёта</span>
+            <input data-path="title" placeholder="Отчёт о мониторинге автомобиля"></label>
+          <label class="field"><span>Подзаголовок</span>
+            <input data-path="subtitle" placeholder="на основе данных системы мониторинга за период"></label>
+        </div>
+
+        <div class="fgroup">
+          <div class="fgroup-h"><span class="label-red">Информация об объекте</span></div>
+          <label class="field"><span>Заголовок карточки</span>
+            <input data-path="objectTitle" placeholder="Информация об объекте"></label>
+          <div class="grid2">
+            <label class="field"><span>PIN</span><input data-path="object.pin" placeholder="123456"></label>
+            <label class="field"><span>Гос. номер</span><input data-path="object.plate" placeholder="Е 001 КХ 197"></label>
+          </div>
+          <label class="field"><span>Владелец</span><input data-path="object.owner" placeholder="Иванов Иван Иванович"></label>
+          <div class="grid2">
+            <label class="field"><span>Марка</span><input data-path="object.brand" placeholder="Mercedes-Benz"></label>
+            <label class="field"><span>Модель</span><input data-path="object.model" placeholder="GLK-500"></label>
+          </div>
+          <label class="field"><span>Адрес объекта</span><input data-path="object.address" placeholder="Москва, ул. Б. Набережная, д. 1"></label>
+          <label class="field"><span>Обложка (герой-фото)</span>
+            <span class="filepick" data-photo="heroPhoto">
+              <button type="button" class="btn btn-ghost btn-sm filepick-btn">＋ Загрузить фото</button>
+              <span class="filepick-name">необязательно — иначе берётся первое фото события</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="fgroup">
+          <div class="fgroup-h"><span class="label-red">Сводка</span></div>
+          <div class="grid2">
+            <label class="field"><span>Тревожных сообщений</span><input data-path="summary.alarms" placeholder="12"></label>
+            <label class="field"><span>Инцидентов</span><input data-path="summary.incidents" placeholder="3"></label>
+          </div>
+        </div>
+
+        <div class="fgroup">
+          <div class="fgroup-h">
+            <span class="label-red">События и фотоматериалы</span>
+            <span class="fgroup-hint">блоки с фото, датой, адресом</span>
+          </div>
+          <label class="field"><span>Заголовок раздела</span>
+            <input data-path="eventsTitle" placeholder="Фотоматериалы и события"></label>
+          <div id="events"></div>
+          <button id="btnAddEvent" type="button" class="add-event">＋ Добавить событие / фото</button>
+        </div>
+
+        <div class="fgroup">
+          <div class="fgroup-h"><span class="label-red">Персональный менеджер</span></div>
+          <label class="field"><span>ФИО</span><input data-path="manager.name" placeholder="Мешенков Андрей"></label>
+          <label class="field"><span>Должность</span><input data-path="manager.role" placeholder="Руководитель направления безопасности"></label>
+          <div class="grid2">
+            <label class="field"><span>Телефон</span><input data-path="manager.phone" placeholder="+7 495 785 53 53 · доб. 4311"></label>
+            <label class="field"><span>E-mail</span><input data-path="manager.email" placeholder="a.meshenkov@cesar-satellite.ru"></label>
+          </div>
+          <label class="field"><span>Фото менеджера</span>
+            <span class="filepick" data-photo="manager.photo">
+              <button type="button" class="btn btn-ghost btn-sm filepick-btn">＋ Загрузить фото</button>
+              <span class="filepick-name">необязательно</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="form-foot">Данные сохраняются в вашем браузере автоматически.</div>
+      </div>
+    </section>
+
+    <!-- ПРАВО: живой предпросмотр -->
+    <section class="pane pane-preview" id="panePreview">
+      <div class="preview-bar">
+        <span class="preview-bar-title">Предпросмотр</span>
+        <button id="btnClosePreview" class="btn btn-ghost btn-sm mobile-only">Закрыть</button>
+      </div>
+      <div class="preview-scroll"><div id="preview"></div></div>
+    </section>
+  </main>
+
+  <!-- модалка с готовой ссылкой -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-mark"><img src="/logo-mark.svg" alt=""></div>
+      <h2>Отчёт готов</h2>
+      <p class="modal-sub">Ссылка общедоступна — откроется на компьютере и телефоне.</p>
+      <div class="linkrow">
+        <input id="linkInput" readonly>
+        <button id="btnCopy" class="btn btn-red btn-sm">Копировать</button>
+      </div>
+      <div class="modal-actions">
+        <a id="linkOpen" class="btn btn-dark" target="_blank" rel="noopener">Открыть отчёт</a>
+        <button id="btnCloseModal" class="btn btn-ghost">Продолжить редактирование</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/report-render.js"></script>
+  <script src="/editor.js"></script>
+</body>
+</html>

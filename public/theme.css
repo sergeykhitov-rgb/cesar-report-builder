@@ -1,0 +1,185 @@
+/* ============================================================
+   CESAR SATELLITE — фирменная тема отчётов
+   Извлечено из коммерческого предложения (Figma) и брендбука.
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --page: #eef1f5;
+  --card: #ffffff;
+  --card-soft: #f7f8fb;
+  --pink: #f7eef0;         /* мягкая подложка карточки менеджера */
+  --ink: #141519;
+  --ink-2: #3a3b40;
+  --muted: #6b7280;
+  --muted-2: #9aa0aa;
+  --line: #ebedf1;
+  --line-soft: #f0f2f5;
+  --red: #e30613;
+  --red-deep: #be0410;
+  --yellow: #ffcc00;
+  --ok: #16a34a;
+
+  --radius: 22px;
+  --radius-md: 16px;
+  --radius-sm: 12px;
+  --shadow-card: 0 8px 30px rgba(11, 12, 16, 0.08);
+  --shadow-soft: 0 4px 16px rgba(11, 12, 16, 0.06);
+  --shadow-pop: 0 18px 50px rgba(11, 12, 16, 0.16);
+
+  --font: 'Onest', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--page);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  line-height: 1.5;
+}
+img, svg, video { display: block; max-width: 100%; }
+button, input, textarea, select { font-family: inherit; font-size: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+a { color: inherit; text-decoration: none; }
+
+/* ---------- типографика бренда ---------- */
+.eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--red);
+}
+.label-red {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--red);
+}
+.h-title {
+  font-weight: 800; letter-spacing: 0.01em; line-height: 1.08;
+  text-transform: uppercase;
+}
+
+/* ---------- кнопки ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border-radius: 999px; font-weight: 600; letter-spacing: 0.01em;
+  padding: 12px 22px; font-size: 14px;
+  transition: transform .18s cubic-bezier(.16,1,.3,1), box-shadow .18s, background .18s, opacity .18s;
+  white-space: nowrap;
+}
+.btn:active { transform: translateY(1px); }
+.btn-red { background: var(--red); color: #fff; box-shadow: 0 10px 24px rgba(227,6,19,.28); }
+.btn-red:hover { background: var(--red-deep); transform: translateY(-2px); }
+.btn-dark { background: var(--ink); color: #fff; }
+.btn-dark:hover { transform: translateY(-2px); box-shadow: var(--shadow-soft); }
+.btn-ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); box-shadow: var(--shadow-soft); }
+.btn-ghost:hover { border-color: #d9dce2; transform: translateY(-2px); }
+.btn:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-sm { padding: 9px 16px; font-size: 13px; }
+
+/* ============================================================
+   ОТЧЁТ (общий рендер — редактор и публичная страница совпадают)
+   ============================================================ */
+.report {
+  --pad: clamp(22px, 4.4vw, 56px);
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* шапка */
+.rp-head {
+  padding: var(--pad) var(--pad) 0;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
+}
+.rp-head-l { min-width: 0; }
+.rp-accent { width: 46px; height: 4px; border-radius: 2px; background: var(--red); margin-bottom: 16px; }
+.rp-title { font-size: clamp(22px, 3.4vw, 34px); font-weight: 800; text-transform: uppercase; letter-spacing: .01em; line-height: 1.06; }
+.rp-subtitle { margin-top: 10px; color: var(--muted); font-size: clamp(13px, 1.6vw, 15px); max-width: 60ch; }
+.rp-logo { flex-shrink: 0; width: clamp(150px, 20vw, 200px); }
+.rp-logo svg, .rp-logo img { width: 100%; height: auto; }
+
+/* герой-фото + карточка объекта */
+.rp-hero {
+  margin: var(--pad) var(--pad) 0;
+  border-radius: var(--radius-md); overflow: hidden; background: #dfe3ea;
+}
+.rp-hero img { width: 100%; height: clamp(200px, 34vw, 320px); object-fit: cover; }
+
+.rp-objwrap { margin: var(--pad) var(--pad) 0; position: relative; z-index: 2; }
+.rp-objwrap.overlap { margin-top: -54px; margin-left: calc(var(--pad) + 8px); max-width: min(64%, 430px); }
+
+.rp-objcard {
+  background: #fff; border: 1px solid var(--line); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card); padding: 22px 24px;
+}
+
+.rp-objcard h3 { font-size: 16px; font-weight: 800; margin-bottom: 14px; }
+.rp-rows { display: grid; gap: 12px; }
+.rp-row { display: grid; gap: 3px; }
+.rp-row .k { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--red); }
+.rp-row .v { font-size: 14.5px; font-weight: 600; color: var(--ink); word-break: break-word; }
+
+/* сводка-статы */
+.rp-stats { padding: var(--pad) var(--pad) 0; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.rp-stat {
+  background: var(--card-soft); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 20px 22px;
+}
+.rp-stat .num { font-size: clamp(28px, 5vw, 40px); font-weight: 800; color: var(--red); line-height: 1; }
+.rp-stat .cap { margin-top: 8px; font-size: 12.5px; color: var(--muted); font-weight: 500; }
+
+/* заголовок раздела */
+.rp-section-h { padding: var(--pad) var(--pad) 0; }
+.rp-section-h .lbl { display: inline-block; }
+.rp-section-h h2 { margin-top: 8px; font-size: clamp(19px, 2.6vw, 26px); font-weight: 800; letter-spacing: -.01em; }
+
+/* события / фотоматериалы */
+.rp-events { padding: 20px var(--pad) 0; display: grid; gap: 18px; }
+.rp-event {
+  border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+.rp-event-photo { background: #e9ecf1; }
+.rp-event-photo img { width: 100%; height: clamp(200px, 40vw, 360px); object-fit: cover; }
+.rp-event-photo.empty {
+  height: 160px; display: flex; align-items: center; justify-content: center;
+  color: var(--muted-2); font-size: 13px; gap: 8px;
+}
+.rp-event-body { padding: 18px 20px; }
+.rp-event-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: #fdecec; color: var(--red); border-radius: 999px;
+  padding: 6px 12px; font-size: 12px; font-weight: 700; margin-bottom: 14px;
+}
+.rp-event-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); }
+.rp-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.rp-meta .k { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--red); }
+.rp-meta .v { font-size: 14px; font-weight: 600; margin-top: 3px; }
+.rp-event-note { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-soft); color: var(--ink-2); font-size: 14px; }
+
+/* футер */
+.rp-foot { margin-top: var(--pad); padding: var(--pad); border-top: 1px solid var(--line); }
+.rp-foot-grid { display: grid; grid-template-columns: 1fr auto; gap: 28px; align-items: center; }
+.rp-foot-logo { width: 170px; }
+.rp-foot-disc { margin-top: 16px; color: var(--muted-2); font-size: 12px; max-width: 46ch; }
+.rp-mgr {
+  background: var(--pink); border-radius: var(--radius-md); padding: 20px 22px; min-width: 260px;
+}
+.rp-mgr .lbl { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--red); }
+.rp-mgr-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.rp-mgr-av { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: #dcdfe6; flex-shrink: 0; }
+.rp-mgr .nm { font-weight: 800; font-size: 15px; }
+.rp-mgr .ro { color: var(--muted); font-size: 12.5px; }
+.rp-mgr-contacts { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(0,0,0,.06); display: grid; gap: 5px; font-size: 13.5px; font-weight: 600; }
+.rp-mgr-contacts a { color: var(--ink); }
+
+@media (max-width: 640px) {
+  .rp-objwrap.overlap { margin: -40px 14px 0; max-width: none; }
+  .rp-meta { grid-template-columns: 1fr 1fr; }
+  .rp-foot-grid { grid-template-columns: 1fr; }
+  .rp-mgr { min-width: 0; }
+}

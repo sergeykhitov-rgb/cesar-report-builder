@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Отчёт CESAR SATELLITE</title>
+  <link rel="icon" href="/logo-mark.svg">
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    .viewer { min-height: 100vh; min-height: 100dvh; padding: clamp(16px, 4vw, 48px) 14px 60px; }
+    .viewer-bar {
+      max-width: 900px; margin: 0 auto 18px; display: flex; align-items: center;
+      justify-content: space-between; gap: 12px;
+    }
+    .viewer-bar img { height: 26px; width: auto; }
+    .state {
+      max-width: 620px; margin: 12vh auto; text-align: center; padding: 40px 24px;
+      background: #fff; border-radius: 22px; box-shadow: var(--shadow-card);
+    }
+    .state img { width: 96px; margin: 0 auto 18px; }
+    .state h1 { font-size: 22px; font-weight: 800; }
+    .state p { color: var(--muted); margin-top: 8px; }
+    .spinner {
+      width: 30px; height: 30px; border: 3px solid var(--line); border-top-color: var(--red);
+      border-radius: 50%; margin: 0 auto 16px; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media print {
+      .viewer-bar { display: none; }
+      body { background: #fff; }
+      .report { box-shadow: none; border-radius: 0; max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="viewer">
+    <div class="viewer-bar">
+      <img src="/logo.svg" alt="CESAR SATELLITE">
+      <button id="btnPrint" class="btn btn-ghost btn-sm" hidden>Скачать / Печать</button>
+    </div>
+    <div id="root">
+      <div class="state"><div class="spinner"></div><h1>Загрузка отчёта…</h1></div>
+    </div>
+  </div>
+  <script src="/report-render.js"></script>
+  <script>
+    (function () {
+      var id = location.pathname.split('/').filter(Boolean).pop();
+      var root = document.getElementById('root');
+      var btnPrint = document.getElementById('btnPrint');
+      fetch('/api/reports/' + encodeURIComponent(id))
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (data) {
+          document.title = (data.title || 'Отчёт') + ' — CESAR SATELLITE';
+          root.innerHTML = window.renderReport(data);
+          btnPrint.hidden = false;
+          btnPrint.addEventListener('click', function () { window.print(); });
+        })
+        .catch(function () {
+          root.innerHTML =
+            '<div class="state"><img src="/logo-mark.svg" alt="">' +
+            '<h1>Отчёт не найден</h1><p>Возможно, ссылка неверна или отчёт был удалён.</p></div>';
+        });
+    })();
+  </script>
+</body>
+</html>
