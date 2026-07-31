@@ -112,7 +112,7 @@ a { color: inherit; text-decoration: none; }
   min-height: clamp(280px, 40vw, 430px);
   padding: clamp(16px, 2.6vw, 26px);
 }
-.rp-hero > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.rp-hero > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: right center; z-index: 0; }
 
 .rp-objwrap { position: relative; z-index: 2; }
 .rp-objwrap.overlay { max-width: min(56%, 400px); }
@@ -184,9 +184,10 @@ a { color: inherit; text-decoration: none; }
 .rp-mgr-contacts a { color: var(--ink); }
 
 @media (max-width: 640px) {
-  .rp-hero.has-img { display: block; min-height: 0; padding: 0; }
-  .rp-hero > img { position: relative; height: 210px; }
-  .rp-objwrap.overlay { max-width: none; margin: -46px 14px 0; z-index: 3; }
+  /* мобильная: фото сверху (машина по правому краю), карточка — ниже фото */
+  .rp-hero.has-img { display: block; min-height: 0; padding: 0; overflow: visible; background: none; border-radius: 0; }
+  .rp-hero > img { position: relative; width: 100%; height: 200px; border-radius: var(--radius-md); object-position: right center; }
+  .rp-objwrap.overlay { max-width: none; margin: 16px 0 0; }
   .rp-meta { grid-template-columns: 1fr 1fr; }
   .rp-foot-grid { grid-template-columns: 1fr; }
   .rp-mgr { min-width: 0; }
