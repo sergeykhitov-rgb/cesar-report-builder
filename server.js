@@ -11,6 +11,7 @@ const PORT = process.env.PORT || 4600;
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data', 'reports');
+const SEED = path.join(ROOT, 'seed'); // встроенные постоянные отчёты (в образе, переживают перезапуск)
 const MAX_BODY = 30 * 1024 * 1024; // 30 МБ (фото в base64)
 
 fs.mkdirSync(DATA, { recursive: true });
@@ -93,8 +94,12 @@ const server = http.createServer(function (req, res) {
     var id = safeId(pathname.slice('/api/reports/'.length));
     if (!id) return sendJSON(res, 400, { error: 'bad id' });
     fs.readFile(path.join(DATA, id + '.json'), 'utf8', function (err, txt) {
-      if (err) return sendJSON(res, 404, { error: 'not found' });
-      send(res, 200, txt, { 'Content-Type': 'application/json; charset=utf-8' });
+      if (!err) return send(res, 200, txt, { 'Content-Type': 'application/json; charset=utf-8' });
+      // фолбэк на встроенные постоянные отчёты (seed/) — они в образе и не пропадают при перезапуске
+      fs.readFile(path.join(SEED, id + '.json'), 'utf8', function (err2, seedTxt) {
+        if (err2) return sendJSON(res, 404, { error: 'not found' });
+        send(res, 200, seedTxt, { 'Content-Type': 'application/json; charset=utf-8' });
+      });
     });
     return;
   }
