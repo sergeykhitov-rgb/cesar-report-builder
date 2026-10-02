@@ -1,0 +1,22 @@
+{
+  "security-kit": {
+    "url": "https://www.csat.ru/storage/media/8a/c28668809d7a5007ab40751c89895370.png?v=1727431706",
+    "path": "public/assets/promotions/references/security-kit.png",
+    "sha256": "675c48fd47eb2361bc589fb3566cec74f9cd43ea5bd9e94019c51905e4951444"
+  },
+  "security-sticker": {
+    "url": "https://www.csat.ru/storage/media/resized/30/cc17ff8c0b5bce73411d3bc17b1e5318-x2-webp.webp?v=1725347784",
+    "path": "public/assets/promotions/references/security-sticker.webp",
+    "sha256": "8a751cf24ac5af6381b4154494012160e9facba34f2a4ff971917bb40ecbfd28"
+  },
+  "motion-sensor": {
+    "url": "https://www.csat.ru/storage/media/resized/1d/71a1a75e7262b69083b8bc90cc53e053-x2-webp.webp?v=1725347774",
+    "path": "public/assets/promotions/references/motion-sensor.webp",
+    "sha256": "81b12809f1eec4d6994b294c235f3c7eb43630425d4f20640f1d1529c4e9f201"
+  },
+  "keypad": {
+    "url": "https://www.csat.ru/storage/media/resized/bd/5f1590a883ed004b224ac5443cef8489-x2-webp.webp?v=1725347773",
+    "path": "public/assets/promotions/references/keypad.webp",
+    "sha256": "767e8e768a0b14097760600ae9aae79038090ddf8025767d0979e3f6802c2877"
+  }
+}

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 
 function loadScript(file, context = {}) {
   context.window = context;
@@ -9,6 +10,22 @@ function loadScript(file, context = {}) {
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), context);
   return context;
 }
+
+test('official equipment sources have verified local copies', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync('public/assets/promotions/references/official-sources.json', 'utf8')
+  );
+  const requiredSources = ['security-kit', 'security-sticker', 'motion-sensor', 'keypad'];
+
+  assert.deepEqual(Object.keys(manifest).sort(), requiredSources.sort());
+  requiredSources.forEach((name) => {
+    const source = manifest[name];
+    assert.match(source.url, /^https:\/\/www\.csat\.ru\/storage\/media\//);
+    const contents = fs.readFileSync(source.path);
+    const sha256 = crypto.createHash('sha256').update(contents).digest('hex');
+    assert.equal(sha256, source.sha256, `${name} SHA-256 mismatch`);
+  });
+});
 
 test('catalog contains 14 unique client promotions', () => {
   const ctx = loadScript('public/promotions.js');
