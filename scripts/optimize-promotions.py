@@ -5,7 +5,8 @@ from PIL import Image, ImageDraw, ImageOps
 
 root = Path("public/assets/promotions")
 source = root / "source"
-files = sorted(source.glob("*.png"))
+helper_files = {"switch-free-background.png", "two-objects-base.png"}
+files = sorted(file for file in source.glob("*.png") if file.name not in helper_files)
 assert len(files) == 14, f"Expected 14 images, found {len(files)}"
 
 for file in files:

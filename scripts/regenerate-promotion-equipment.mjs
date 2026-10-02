@@ -35,8 +35,9 @@ const jobs = [
   },
   {
     name: 'switch-free',
-    refs: ['keypad.webp', 'motion-sensor.webp', 'open-sensor.webp'],
-    prompt: 'Keep the professional installer, wall placement and clean apartment. Replace all generic security devices with exact copies of the referenced CESAR SATELLITE white keypad and sensors. The keypad must have a white vertical body, twelve raised round grey numeric buttons, speaker holes and black base. Show one small matching white sensor beside it, with realistic scale and a neat connection wire.'
+    output: 'switch-free-background.png',
+    refs: [],
+    prompt: 'Create an equipment-free background based on this composition. Show a professional installer actively standing ON a compact open stepladder: both feet clearly rest on safe ladder steps, his body elevated above the floor, one hand steadying him and the other reaching high toward one tiny device-sized marked point directly beneath the visible ceiling line in the intact wall corner of a premium modern apartment. Do not place him on the floor beside the ladder. The wall surface must remain perfectly closed, smooth and clean: absolutely no electrical panel, no junction box, no opening, no hole, no recess, no exposed wiring, no alarm equipment, no keypad, no sensor, no control panel, no cables, no logos and no text. Keep generous uninterrupted clean wall space to the right and at realistic chest height for later product compositing.'
   },
   {
     name: 'three-cameras',
@@ -71,6 +72,6 @@ for (const job of jobs.filter((item) => requested.size === 0 || requested.has(it
   const url = generate(job);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Download failed for ${job.name}: ${response.status}`);
-  await writeFile(path.join(sourceDir, `${job.name}.png`), Buffer.from(await response.arrayBuffer()));
+  await writeFile(path.join(sourceDir, job.output ?? `${job.name}.png`), Buffer.from(await response.arrayBuffer()));
   process.stdout.write('done\n');
 }
