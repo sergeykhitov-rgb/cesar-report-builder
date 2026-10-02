@@ -35,9 +35,17 @@ const jobs = [
   },
   {
     name: 'switch-free',
-    output: 'switch-free-background.png',
-    refs: [],
-    prompt: 'Create an equipment-free background based on this composition. Show a professional installer actively standing ON a compact open stepladder: both feet clearly rest on safe ladder steps, his body elevated above the floor, one hand steadying him and the other reaching high toward one tiny device-sized marked point directly beneath the visible ceiling line in the intact wall corner of a premium modern apartment. Do not place him on the floor beside the ladder. The wall surface must remain perfectly closed, smooth and clean: absolutely no electrical panel, no junction box, no opening, no hole, no recess, no exposed wiring, no alarm equipment, no keypad, no sensor, no control panel, no cables, no logos and no text. Keep generous uninterrupted clean wall space to the right and at realistic chest height for later product compositing.'
+    input: 'switch-free-generation-base.png',
+    output: 'switch-free.png',
+    refs: ['motion-sensor.webp', 'keypad.webp'],
+    prompt: 'Preserve the installer, stepladder, room, pose and framing from the first image. Add the exact referenced CESAR SATELLITE motion sensor as a physically small, realistic wall-mounted device directly beneath the technician’s raised fingertips at the high wall-and-ceiling corner. Add the exact referenced CESAR SATELLITE keypad securely mounted on the same wall near the technician at realistic chest and hand height. Both devices must have believable real-world scale, perspective, contact shadows and wall attachment: no oversized products, no floating cutouts, no sticker appearance, no extra devices, no holes, no exposed wires, no text and no logos.'
+  },
+  {
+    name: 'rental-zero',
+    input: 'rental-zero-generation-base.png',
+    output: 'rental-zero.png',
+    refs: ['security-kit.png'],
+    prompt: 'Create a polished premium minimalist Russian home-security advertising scene using the complete referenced CESAR SATELLITE security kit. Show the full kit clearly and faithfully as one coherent hero product group, large and prominent, grounded on a tasteful architectural stone or warm studio surface in a refined modern interior. Use premium natural light, restrained warm grey materials, depth and a believable grounded shadow. Preserve the kit’s recognizable device shapes, count, proportions and arrangement. No houses, no people, no text, no price, no logo overlay, no floating tiny cutout, no invented equipment.'
   },
   {
     name: 'three-cameras',
@@ -55,7 +63,7 @@ function generate(job) {
   const args = [
     'generate', 'create', 'nano_banana_2_lite',
     '--prompt', `${job.prompt} ${shared}`,
-    '--image', path.join(sourceDir, `${job.name}.png`)
+    '--image', path.join(sourceDir, job.input ?? `${job.name}.png`)
   ];
   for (const ref of job.refs) args.push('--image', path.join(referenceDir, ref));
   args.push('--aspect_ratio', '16:9', '--resolution', '1k', '--thinking', 'MINIMAL', '--wait', '--wait-timeout', '20m', '--json');
@@ -72,6 +80,12 @@ for (const job of jobs.filter((item) => requested.size === 0 || requested.has(it
   const url = generate(job);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Download failed for ${job.name}: ${response.status}`);
-  await writeFile(path.join(sourceDir, job.output ?? `${job.name}.png`), Buffer.from(await response.arrayBuffer()));
+  const outputPath = path.join(sourceDir, job.output ?? `${job.name}.png`);
+  await writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
+  execFileSync('python3', [
+    '-c',
+    'from PIL import Image, ImageOps; import sys; p=sys.argv[1]; im=Image.open(p).convert("RGB"); ImageOps.fit(im, (1280, 720), method=Image.Resampling.LANCZOS).save(p)',
+    outputPath
+  ]);
   process.stdout.write('done\n');
 }

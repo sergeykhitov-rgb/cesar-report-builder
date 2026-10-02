@@ -4,7 +4,7 @@
 
 **Goal:** Replace three promotion visuals with compositions that preserve official CESAR SATELLITE product and sticker artwork exactly.
 
-**Architecture:** Store official high-resolution source cutouts locally with source URLs and SHA-256 provenance. Use a deterministic Pillow compositor for the complete-kit and sticker cards; use Nano Banana only to create an equipment-free installer background, then composite the untouched official keypad and motion-sensor cutouts over it.
+**Architecture:** Store official high-resolution source assets locally with source URLs and SHA-256 provenance. Per the latest user direction, generate `switch-free` and `rental-zero` fully in Nano Banana from stable, separate composition bases plus the official CESAR image references. Keep deterministic Pillow compositing only for the already-approved `two-objects` sticker image.
 
 **Tech Stack:** Node test runner, Python 3 + Pillow, Higgsfield Nano Banana 2 Lite, existing static promotion catalog.
 
@@ -78,13 +78,13 @@ Run: `npm test`
 
 Expected: FAIL because the compositor does not exist.
 
-- [ ] **Step 3: Generate an equipment-free installer background**
+- [ ] **Step 3: Generate switch-free from a stable ladder base**
 
-Run Nano Banana 2 Lite with the current `switch-free.png` as composition reference and this constraint: a technician on a stepladder working high in a clean apartment wall corner; completely blank wall; no alarm equipment, no keypad, no sensor, no logos, no text. Keep the existing premium light-grey advertising style and 16:9 framing.
+Run Nano Banana 2 Lite with `switch-free-generation-base.png` as the immutable composition reference plus the official motion-sensor and keypad references. The sensor must be physically small and mounted directly beneath the raised fingers; the keypad must be wall-mounted nearby at realistic chest/hand height. Both must have believable scale, perspective, and contact with the wall.
 
-- [ ] **Step 4: Implement deterministic compositing**
+- [ ] **Step 4: Generate rental-zero and retain deterministic sticker compositing**
 
-Create `compose-authentic-promotions.py` with four focused functions. `contain_rgba(image, width, height)` scales an RGBA layer proportionally with Pillow's Lanczos resampler. `paste_with_shadow(canvas, layer, xy)` creates a blurred alpha shadow and then alpha-composites the unchanged resized layer. `compose_switch_free()` places the official motion sensor at `(1040, 80)` with a 90-pixel bounding height and the official keypad at `(330, 275)` with a 170-pixel bounding height on the equipment-free background. `compose_rental_zero()` creates a 1280x720 warm-grey studio background and centers the official full kit inside a 940x500 bounding box. `compose_two_objects()` preserves the existing properties and places the official security sticker at `(1000, 70)` inside a 165x165 bounding box. Save every PNG as RGB at exactly 1280x720. The source product layers are only resized proportionally and alpha-composited; no generative processing is applied.
+Run Nano Banana 2 Lite with `rental-zero-generation-base.png` plus the official complete kit reference to create a premium minimalist architectural/studio hero scene: full kit prominent and grounded, no houses and no text. `compose-authentic-promotions.py` remains restricted to `compose_two_objects()`, preserving the approved properties and official security sticker. The earlier manual coordinates for switch-free and rental-zero are retired because those two visuals now use the user-requested reference-driven generation workflow.
 
 - [ ] **Step 5: Optimize outputs**
 

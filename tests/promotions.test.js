@@ -39,24 +39,44 @@ test('corrected promotion outputs are exactly 1280x720', () => {
     ).trim();
     assert.equal(dimensions, '1280 720', `${file} must be 1280x720`);
   });
+
+  ['switch-free.png', 'rental-zero.png', 'two-objects.png'].forEach((file) => {
+    const dimensions = execFileSync(
+      'python3',
+      ['-c', 'from PIL import Image; import sys; print(*Image.open(sys.argv[1]).size)', `public/assets/promotions/source/${file}`],
+      { encoding: 'utf8' }
+    ).trim();
+    assert.equal(dimensions, '1280 720', `${file} source must be 1280x720`);
+  });
 });
 
-test('authentic promotions compositor uses every official equipment source', () => {
+test('manual compositor is restricted to the approved two-objects sticker image', () => {
   const compositor = fs.readFileSync('scripts/compose-authentic-promotions.py', 'utf8');
-  const requiredSources = [
-    'security-kit.png',
-    'security-sticker.webp',
-    'motion-sensor.webp',
-    'keypad.webp'
-  ];
-
-  requiredSources.forEach((source) => assert.match(compositor, new RegExp(source.replace('.', '\\.'))));
+  assert.match(compositor, /security-sticker\.webp/);
+  assert.match(compositor, /two-objects-base\.png/);
+  assert.doesNotMatch(compositor, /security-kit\.png|motion-sensor\.webp|keypad\.webp/);
+  assert.doesNotMatch(compositor, /compose_switch_free|compose_rental_zero/);
 });
 
 test('promotion optimizer excludes compositor helper images', () => {
   const optimizer = fs.readFileSync('scripts/optimize-promotions.py', 'utf8');
   assert.match(optimizer, /switch-free-background\.png/);
+  assert.match(optimizer, /switch-free-generation-base\.png/);
+  assert.match(optimizer, /rental-zero-generation-base\.png/);
   assert.match(optimizer, /two-objects-base\.png/);
+});
+
+test('Higgsfield regenerates switch-free and rental-zero from stable bases with official refs', () => {
+  const generator = fs.readFileSync('scripts/regenerate-promotion-equipment.mjs', 'utf8');
+  const switchJob = generator.match(/name:\s*'switch-free',([\s\S]*?)\n\s*},/)[1];
+  const rentalJob = generator.match(/name:\s*'rental-zero',([\s\S]*?)\n\s*},/)[1];
+  assert.match(switchJob, /input:\s*'switch-free-generation-base\.png'/);
+  assert.match(switchJob, /output:\s*'switch-free\.png'/);
+  assert.match(switchJob, /refs:\s*\['motion-sensor\.webp',\s*'keypad\.webp'\]/);
+  assert.match(rentalJob, /input:\s*'rental-zero-generation-base\.png'/);
+  assert.match(rentalJob, /output:\s*'rental-zero\.png'/);
+  assert.match(rentalJob, /refs:\s*\['security-kit\.png'\]/);
+  assert.match(generator, /job\.input\s*\?\?\s*`\$\{job\.name\}\.png`/);
 });
 
 test('catalog contains 14 unique client promotions', () => {
