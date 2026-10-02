@@ -41,6 +41,27 @@
     return '<div class="rp-stats">' + tiles + '</div>';
   }
 
+  function promotions(d) {
+    var items = (d.promotions || []).filter(function (item) {
+      return item && has(item.title) && (has(item.description) || has(item.image));
+    });
+    if (!items.length) return '';
+
+    var html = '<div class="rp-section-h rp-promotions-h"><span class="label-red lbl">Для вас</span>' +
+      '<h2>Специальные предложения</h2></div><div class="rp-promotions">';
+    items.forEach(function (item) {
+      var image = has(item.image)
+        ? '<div class="rp-promo-image"><img src="' + esc(item.image) + '" alt=""></div>'
+        : '';
+      html += '<div class="rp-promo">' + image + '<div class="rp-promo-body">' +
+        '<div class="rp-promo-label">Акция</div>' +
+        '<h3>' + esc(item.title) + '</h3>' +
+        (has(item.description) ? '<p>' + nl2br(item.description) + '</p>' : '') +
+        '</div></div>';
+    });
+    return html + '</div>';
+  }
+
   function events(d) {
     var evs = (d.events || []).filter(function (e) {
       return has(e.signal) || has(e.date) || has(e.time) || has(e.address) || has(e.photo) || has(e.note);
@@ -104,7 +125,7 @@
     } else {
       block = card ? '<div class="rp-objwrap flow">' + card + '</div>' : '';
     }
-    return '<article class="report">' + head + block + stats(d) + events(d) + footer(d) + '</article>';
+    return '<article class="report">' + head + block + stats(d) + promotions(d) + events(d) + footer(d) + '</article>';
   }
 
   global.renderReport = renderReport;

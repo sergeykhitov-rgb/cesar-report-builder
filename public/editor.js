@@ -11,6 +11,7 @@
     object: { pin: '', owner: '', brand: '', model: '', plate: '', address: '' },
     heroPhoto: DEFAULT_HERO,
     summary: { alarms: '', incidents: '' },
+    promotions: [],
     eventsTitle: 'Фотоматериалы и события',
     events: [],
     manager: {
@@ -24,6 +25,7 @@
   };
 
   var state = load();
+  if (!Array.isArray(state.promotions)) state.promotions = [];
 
   /* ---------- утилиты состояния ---------- */
   function load() {
@@ -139,6 +141,63 @@
           isAvatar ? 400 : 1800, isAvatar ? 0.85 : 0.82);
       });
       refresh();
+    });
+  }
+
+  /* ---------- акции ---------- */
+  var promotionsEl = document.getElementById('promotions');
+
+  function selectedPromotion(id) {
+    return state.promotions.find(function (item) { return item.id === id; });
+  }
+
+  function togglePromotion(item) {
+    var index = state.promotions.findIndex(function (selected) { return selected.id === item.id; });
+    if (index === -1) {
+      state.promotions.push({ id: item.id, title: item.title, description: item.description, image: item.image });
+    } else {
+      state.promotions.splice(index, 1);
+    }
+    save(); render(); renderPromotions();
+  }
+
+  function renderPromotions() {
+    promotionsEl.innerHTML = '';
+    (window.CESAR_PROMOTIONS || []).forEach(function (item) {
+      var selected = selectedPromotion(item.id);
+      var card = document.createElement('div');
+      card.className = 'promo-option' + (selected ? ' selected' : '');
+      card.setAttribute('role', 'checkbox');
+      card.setAttribute('aria-checked', selected ? 'true' : 'false');
+      card.tabIndex = 0;
+      card.innerHTML =
+        '<div class="promo-option-image"><img src="' + item.image + '" alt=""><span class="promo-check">✓</span></div>' +
+        '<div class="promo-option-body"><div class="promo-option-title">' + item.title + '</div>' +
+        '<div class="promo-option-description">' + item.description + '</div></div>' +
+        (selected ? '<div class="promo-edit">' +
+          '<label class="field"><span>Заголовок в отчёте</span><input data-promo-title></label>' +
+          '<label class="field"><span>Описание в отчёте</span><textarea data-promo-description></textarea></label>' +
+        '</div>' : '');
+
+      card.addEventListener('click', function (event) {
+        if (event.target.closest('.promo-edit')) return;
+        togglePromotion(item);
+      });
+      card.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault(); togglePromotion(item);
+        }
+      });
+
+      if (selected) {
+        var titleInput = card.querySelector('[data-promo-title]');
+        var descriptionInput = card.querySelector('[data-promo-description]');
+        titleInput.value = selected.title;
+        descriptionInput.value = selected.description;
+        titleInput.addEventListener('input', function () { selected.title = titleInput.value; save(); render(); });
+        descriptionInput.addEventListener('input', function () { selected.description = descriptionInput.value; save(); render(); });
+      }
+      promotionsEl.appendChild(card);
     });
   }
 
@@ -280,12 +339,13 @@
     document.querySelectorAll('[data-path]').forEach(function (el) {
       var v = getPath(state, el.getAttribute('data-path')); el.value = v == null ? '' : v;
     });
-    bindPhotoPickers(); renderEvents(); render();
+    bindPhotoPickers(); renderPromotions(); renderEvents(); render();
   }
 
   /* ---------- старт ---------- */
   bindFields();
   bindPhotoPickers();
+  renderPromotions();
   renderEvents();
   render();
 })();

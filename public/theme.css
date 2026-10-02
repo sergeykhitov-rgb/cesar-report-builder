@@ -82,6 +82,8 @@ a { color: inherit; text-decoration: none; }
    ============================================================ */
 .report {
   --pad: clamp(22px, 4.4vw, 56px);
+  width: 100%;
+  min-width: 0;
   max-width: 900px;
   margin: 0 auto;
   background: var(--card);
@@ -138,6 +140,23 @@ a { color: inherit; text-decoration: none; }
 .rp-stat .num { font-size: clamp(28px, 5vw, 40px); font-weight: 800; color: var(--red); line-height: 1; }
 .rp-stat .cap { margin-top: 8px; font-size: 12.5px; color: var(--muted); font-weight: 500; }
 
+/* акции */
+.rp-promotions-h { padding-top: var(--pad); }
+.rp-promotions {
+  padding: 20px var(--pad) 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px;
+}
+.rp-promo {
+  min-width: 0;
+  border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; background: #fff;
+  box-shadow: var(--shadow-soft); break-inside: avoid; page-break-inside: avoid;
+}
+.rp-promo-image { aspect-ratio: 16 / 9; background: #e9ecf1; overflow: hidden; }
+.rp-promo-image img { width: 100%; height: 100%; object-fit: cover; }
+.rp-promo-body { padding: 18px 20px 20px; }
+.rp-promo-label { font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--red); }
+.rp-promo h3 { margin-top: 7px; font-size: 17px; line-height: 1.2; font-weight: 800; }
+.rp-promo p { margin-top: 9px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+
 /* заголовок раздела */
 .rp-section-h { padding: var(--pad) var(--pad) 0; }
 .rp-section-h .lbl { display: inline-block; }
@@ -184,11 +203,22 @@ a { color: inherit; text-decoration: none; }
 .rp-mgr-contacts a { color: var(--ink); }
 
 @media (max-width: 640px) {
+  .report { --pad: 22px; border-radius: 16px; }
+  .rp-head { gap: 12px; }
+  .rp-title, .rp-subtitle, .rp-promo h3, .rp-promo p { overflow-wrap: anywhere; }
   /* мобильная: фото сверху (машина по правому краю), карточка — ниже фото */
   .rp-hero.has-img { display: block; min-height: 0; padding: 0; overflow: visible; background: none; border-radius: 0; }
   .rp-hero > img { position: relative; width: 100%; height: 200px; border-radius: var(--radius-md); object-position: right center; }
   .rp-objwrap.overlay { max-width: none; margin: 16px 0 0; }
   .rp-meta { grid-template-columns: 1fr 1fr; }
+  .rp-promotions { grid-template-columns: 1fr; }
   .rp-foot-grid { grid-template-columns: 1fr; }
   .rp-mgr { min-width: 0; }
+}
+
+@media print {
+  .rp-promo { break-inside: avoid; page-break-inside: avoid; }
+  .rp-promo-image, .rp-promo-body { break-inside: avoid; }
+  .rp-foot { break-inside: avoid; page-break-inside: avoid; }
+  .rp-foot-grid, .rp-mgr { break-inside: avoid; page-break-inside: avoid; }
 }
