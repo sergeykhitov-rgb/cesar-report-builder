@@ -7,6 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
+const { ZipArchive } = require('archiver');
+const { MIME_XLSX, buildEstimateWorkbook, estimateFilename, uniqueEstimateFilenames } = require('./lib/xlsx-export');
 
 const PORT = process.env.PORT || 4600;
 const ROOT = __dirname;
@@ -30,6 +32,36 @@ function send(res, code, body, headers) {
 }
 function sendJSON(res, code, obj) {
   send(res, code, JSON.stringify(obj), { 'Content-Type': 'application/json; charset=utf-8' });
+}
+function attachmentHeader(asciiName, unicodeName) {
+  return 'attachment; filename="' + asciiName + '"; filename*=UTF-8\'\'' + encodeURIComponent(unicodeName).replace(/[!'()*]/g, function (char) {
+    return '%' + char.charCodeAt(0).toString(16).toUpperCase();
+  });
+}
+
+function exportGroupsFromItems(items) {
+  if (!Array.isArray(items) || !items.length) {
+    var emptyError = new Error('items are required'); emptyError.code = 'INVALID_EXPORT'; emptyError.path = 'items'; throw emptyError;
+  }
+  var groups = [], seen = Object.create(null);
+  items.forEach(function (item, index) {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || typeof item.system !== 'string' || !item.system.trim()) {
+      var error = new Error('item system is required'); error.code = 'INVALID_EXPORT'; error.path = 'items.' + index + '.system'; throw error;
+    }
+    var id = item.system.trim();
+    if (seen[id]) return;
+    seen[id] = true;
+    groups.push({ id: id, label: typeof item.systemLabel === 'string' && item.systemLabel.trim() ? item.systemLabel.trim() : id });
+  });
+  return groups;
+}
+
+function exportError(res, error) {
+  if (error && error.code === 'INVALID_EXPORT') {
+    return sendJSON(res, 422, { error: 'invalid export', errors: [{ code: error.code, path: error.path || 'export', message: error.message }] });
+  }
+  console.error(error);
+  return sendJSON(res, 500, { error: 'export failed' });
 }
 function safeId(id) { return /^[a-zA-Z0-9_-]{4,40}$/.test(id) ? id : null; }
 function genId() { return crypto.randomBytes(6).toString('hex'); }
@@ -213,6 +245,41 @@ function proposalValidationErrors(data) {
 const server = http.createServer(function (req, res) {
   var url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   var pathname = decodeURIComponent(url.pathname);
+
+  // --- API: отдельные сметы оборудования по системам ---
+  if (req.method === 'POST' && pathname === '/api/exports/xlsx') {
+    readBody(req).then(async function (raw) {
+      var parsed;
+      try { parsed = JSON.parse(raw); } catch (e) { return sendJSON(res, 400, { error: 'bad json' }); }
+      try {
+        if (parsed && Array.isArray(parsed.items) && parsed.items.length > 200) {
+          var tooMany = new Error('items must contain 1..200 entries'); tooMany.code = 'INVALID_EXPORT'; tooMany.path = 'items'; throw tooMany;
+        }
+        var proposal = clean(parsed);
+        var groups = exportGroupsFromItems(proposal && proposal.items);
+        var buffers = await Promise.all(groups.map(function (group) { return buildEstimateWorkbook(proposal, group); }));
+        if (groups.length === 1) {
+          return send(res, 200, buffers[0], {
+            'Content-Type': MIME_XLSX,
+            'Content-Disposition': attachmentHeader('estimate.xlsx', estimateFilename(proposal, groups[0])),
+            'Content-Length': buffers[0].length,
+          });
+        }
+        var names = uniqueEstimateFilenames(proposal, groups);
+        var archive = new ZipArchive({ zlib: { level: 9 } });
+        archive.on('error', function (error) { if (!res.headersSent) exportError(res, error); else res.destroy(error); });
+        res.writeHead(200, {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/zip',
+          'Content-Disposition': attachmentHeader('estimates.zip', 'Сметы оборудования.zip'),
+        });
+        archive.pipe(res);
+        buffers.forEach(function (buffer, index) { archive.append(buffer, { name: names[index], date: new Date('2000-01-01T00:00:00.000Z') }); });
+        await archive.finalize();
+      } catch (error) { if (res.headersSent) res.destroy(error); else exportError(res, error); }
+    }).catch(function () { sendJSON(res, 413, { error: 'payload too large' }); });
+    return;
+  }
 
   // --- API: создать отчёт ---
   if (req.method === 'POST' && pathname === '/api/reports') {

@@ -5,6 +5,8 @@ const net = require('node:net');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { spawn } = require('node:child_process');
+const ExcelJS = require('exceljs');
+const unzipper = require('unzipper');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -38,11 +40,27 @@ function postJSON(port, pathname, payload) {
     }, response => {
       const chunks = [];
       response.on('data', chunk => chunks.push(chunk));
-      response.on('end', () => resolve({ status: response.statusCode, body: Buffer.concat(chunks) }));
+      response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }));
     });
     req.on('error', reject);
     req.end(body);
   });
+}
+
+function exportPayload(items) {
+  return {
+    client: { name: 'ООО Тест' },
+    object: { pin: '7711', account: 'ЛС-1', invoice: 'Счёт-2', address: 'Москва' },
+    generatedAt: '2026-10-21T09:00:00.000Z',
+    items,
+    computed: { equipment: { afterDiscount: 1000 }, discountPercent: 0 },
+  };
+}
+
+async function workbookStrings(buffer) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  return workbook.worksheets[0].getSheetValues().flat(2).map(value => typeof value === 'object' && value ? value.result || value.formula || '' : value).join(' | ');
 }
 
 async function startServer(t) {
@@ -211,4 +229,61 @@ test('POST reports rejects an invalid public proposal with structured 422 errors
   assert.equal(legacy.status, 200);
   const id = JSON.parse(legacy.body.toString('utf8')).id;
   t.after(() => require('node:fs').rmSync(path.join(ROOT, 'data', 'reports', id + '.json'), { force: true }));
+});
+
+test('POST xlsx returns one workbook with RFC5987 filename for one system', async t => {
+  const port = await startServer(t);
+  const response = await postJSON(port, '/api/exports/xlsx', exportPayload([
+    { system: 'ritm', systemLabel: 'РИТМ', code: 'R-1', name: 'Панель', model: 'GSM-5', unit: 'шт.', quantity: 2, installedUnitPrice: 500 },
+  ]));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-type'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.match(response.headers['content-disposition'], /^attachment; filename="estimate\.xlsx"; filename\*=UTF-8''/);
+  assert.equal(response.body.subarray(0, 2).toString(), 'PK');
+  const strings = await workbookStrings(response.body);
+  assert.match(strings, /РИТМ|R-1|Панель/);
+  assert.doesNotMatch(strings, /sourceInstalledUnitPrice|overrideReason|provenance/);
+});
+
+test('POST xlsx derives unique system groups server-side and returns a ZIP with one correct workbook per system', async t => {
+  const port = await startServer(t);
+  const payload = exportPayload([
+    { system: 'ritm', systemLabel: 'Охрана/Видео', code: 'R-1', name: 'Панель', quantity: 1, installedUnitPrice: 1000 },
+    { system: 'hik', systemLabel: 'Охрана:Видео', code: 'H-1', name: 'Камера', quantity: 2, installedUnitPrice: 2000 },
+  ]);
+  payload.exportGroups = [{ id: 'evil', label: 'Подмена', items: payload.items }];
+  const response = await postJSON(port, '/api/exports/xlsx', payload);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-type'], 'application/zip');
+  assert.match(response.headers['content-disposition'], /^attachment; filename="estimates\.zip"; filename\*=UTF-8''/);
+  const archive = await unzipper.Open.buffer(response.body);
+  assert.deepEqual(archive.files.map(file => file.path), [
+    'Смета ООО Тест — ОхранаВидео.xlsx',
+    'Смета ООО Тест — ОхранаВидео (2).xlsx',
+  ]);
+  const first = await workbookStrings(await archive.files[0].buffer());
+  const second = await workbookStrings(await archive.files[1].buffer());
+  assert.match(first, /R-1|Панель/);
+  assert.doesNotMatch(first, /H-1|Камера|Подмена/);
+  assert.match(second, /H-1|Камера/);
+  assert.doesNotMatch(second, /R-1|Панель|Подмена/);
+});
+
+test('POST xlsx rejects malformed exports with structured 400 or 422 and does not crash', async t => {
+  const port = await startServer(t);
+  const invalid = await postJSON(port, '/api/exports/xlsx', exportPayload([
+    { system: 'ritm', systemLabel: 'РИТМ', code: 'R-1', name: 'Панель', quantity: 0, installedUnitPrice: 'NaN' },
+  ]));
+  assert.equal(invalid.status, 422);
+  const body = JSON.parse(invalid.body.toString('utf8'));
+  assert.equal(body.error, 'invalid export');
+  assert.ok(Array.isArray(body.errors));
+  assert.ok(body.errors[0].path);
+  const tooMany = await postJSON(port, '/api/exports/xlsx', exportPayload(Array.from({ length: 201 }, (_, index) => ({
+    system: 'ritm', systemLabel: 'РИТМ', code: String(index), name: 'Позиция', quantity: 1, installedUnitPrice: 1,
+  }))));
+  assert.equal(tooMany.status, 422);
+  assert.match(tooMany.body.toString('utf8'), /1\.\.200|200/);
+  const after = await request(port, '/');
+  assert.equal(after.status, 200);
 });

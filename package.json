@@ -9,5 +9,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "archiver": "^8.0.0",
+    "exceljs": "^4.4.0"
   }
 }

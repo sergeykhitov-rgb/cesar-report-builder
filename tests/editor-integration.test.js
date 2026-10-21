@@ -28,7 +28,7 @@ class FakeElement {
   scrollIntoView() {}
   focus() { this.focused = true; }
   select() {}
-  click(type, event = {}) { return this.listeners[type](event); }
+  click(type, event = {}) { if (type === undefined) { this.programmaticClicked = true; return; } return this.listeners[type](event); }
 }
 
 function createEditorHarness(savedDraft, options = {}) {
@@ -41,6 +41,8 @@ function createEditorHarness(savedDraft, options = {}) {
   const renders = [];
   let fetchCalls = 0;
   const fetchBodies = [];
+  const fetchRequests = [];
+  const createdElements = [];
   const selectorElements = new Map();
   const documentListeners = {};
   const document = {
@@ -54,7 +56,7 @@ function createEditorHarness(savedDraft, options = {}) {
       return [];
     },
     querySelector(selector) { if (!selectorElements.has(selector)) selectorElements.set(selector, new FakeElement()); return selectorElements.get(selector); },
-    createElement() { return new FakeElement(); },
+    createElement(tagName) { const element = new FakeElement(); element.tagName = String(tagName || '').toUpperCase(); createdElements.push(element); return element; },
     execCommand() { return true; },
     addEventListener(type, listener) { documentListeners[type] = listener; },
     removeEventListener(type, listener) { if (documentListeners[type] === listener) delete documentListeners[type]; },
@@ -73,7 +75,15 @@ function createEditorHarness(savedDraft, options = {}) {
     navigator: {},
     location: { origin: 'http://test.local' },
     matchMedia() { return { matches: !!options.mobile }; },
-    fetch(url, options) { fetchCalls += 1; fetchBodies.push(JSON.parse(options.body)); return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'report-1' }) }); },
+    Blob,
+    URL: { createObjectURL(blob) { context.lastObjectUrlBlob = blob; return 'blob:test'; }, revokeObjectURL(url) { context.revokedObjectUrl = url; } },
+    fetch(url, fetchOptions) {
+      fetchCalls += 1;
+      fetchRequests.push({ url, options: fetchOptions });
+      fetchBodies.push(JSON.parse(fetchOptions.body));
+      if (options.fetch) return options.fetch(url, fetchOptions);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'report-1' }) });
+    },
   };
   context.window = context;
   context.globalThis = context;
@@ -83,7 +93,7 @@ function createEditorHarness(savedDraft, options = {}) {
   vm.runInNewContext(fs.readFileSync('public/calculator.js', 'utf8'), context);
   context.renderReport = state => { renders.push(JSON.parse(JSON.stringify(state))); return ''; };
   vm.runInNewContext(fs.readFileSync('public/editor.js', 'utf8'), context);
-  return { elements, selectorElements, document, managerInput, cameraInput, storage, renders, fetchBodies, fetchCalls: () => fetchCalls };
+  return { elements, selectorElements, document, managerInput, cameraInput, storage, renders, fetchBodies, fetchRequests, createdElements, context, fetchCalls: () => fetchCalls };
 }
 
 test('editor deep-merges an incomplete legacy draft and reset has independent defaults', () => {
@@ -194,4 +204,78 @@ test('success dialog and mobile preview move focus, close on Escape, and restore
   assert.equal(preview.classList.contains('open'), false);
   assert.equal(preview.hasAttribute('role'), false);
   assert.equal(previewTrigger.focused, true);
+});
+
+test('XLSX export enables only for a valid proposal while PDF stays disabled', () => {
+  const valid = createEditorHarness({
+    promotions: [], events: [], object: { pin: '11', address: 'Москва' },
+    proposal: { client: { name: 'ООО Тест' }, items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000 }] },
+  });
+  assert.equal(valid.elements.get('btnExportXlsx').disabled, false);
+  assert.equal(valid.elements.get('btnExportPdf').disabled, true);
+
+  const invalid = createEditorHarness({ promotions: [], events: [], proposal: { client: { name: '' }, items: [] } });
+  assert.equal(invalid.elements.get('btnExportXlsx').disabled, true);
+  assert.equal(invalid.elements.get('btnExportPdf').disabled, true);
+});
+
+test('XLSX export posts a minimal safe payload, downloads response filename and restores busy state', async () => {
+  const harness = createEditorHarness({
+    promotions: [], events: [], object: { pin: '11', address: 'Москва', owner: 'Не для сметы' },
+    proposal: {
+      client: { name: 'ООО Тест', phone: '+7', email: 'mail@example.test' },
+      items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '1', name: 'Датчик', model: 'M', unit: 'шт.', quantity: 1, installedUnitPrice: 1000, sourceInstalledUnitPrice: 900, priceOverridden: true }],
+      exportMetadata: { internal: true }, overrides: { monthlyFeeOverride: 1 },
+    },
+  }, { fetch: () => Promise.resolve({
+    ok: true,
+    headers: { get(name) { return name.toLowerCase() === 'content-disposition' ? "attachment; filename=\"estimate.xlsx\"; filename*=UTF-8''%D0%A1%D0%BC%D0%B5%D1%82%D0%B0%20%D0%A2%D0%B5%D1%81%D1%82.xlsx" : null; } },
+    blob: () => Promise.resolve(new Blob(['xlsx'], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })),
+  }) });
+  const button = harness.elements.get('btnExportXlsx');
+  button.click('click');
+  assert.equal(button.disabled, true);
+  assert.match(button.textContent, /Готовим/);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(harness.fetchRequests[0].url, '/api/exports/xlsx');
+  const payload = harness.fetchBodies[0];
+  assert.equal(payload.client.name, 'ООО Тест');
+  assert.equal(payload.object.pin, '11');
+  assert.equal(payload.items[0].installedUnitPrice, 1000);
+  const json = JSON.stringify(payload);
+  ['phone', 'email', 'owner', 'sourceInstalledUnitPrice', 'priceOverridden', 'exportMetadata', 'overrides', 'warnings', 'exportGroups'].forEach(key => assert.doesNotMatch(json, new RegExp(`"${key}"`)));
+  const anchor = harness.createdElements.find(element => element.tagName === 'A');
+  assert.equal(anchor.download, 'Смета Тест.xlsx');
+  assert.equal(anchor.programmaticClicked, true);
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, 'Смета XLSX');
+  assert.equal(harness.context.revokedObjectUrl, 'blob:test');
+});
+
+test('XLSX export shows server validation error and restores button after a 422 response', async () => {
+  const harness = createEditorHarness({
+    promotions: [], events: [], proposal: { client: { name: 'ООО Тест' }, items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000 }] },
+  }, { fetch: () => Promise.resolve({ ok: false, status: 422, json: () => Promise.resolve({ errors: [{ message: 'Некорректная цена.' }] }) }) });
+  const button = harness.elements.get('btnExportXlsx');
+  button.click('click');
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(harness.elements.get('toast').textContent, /Некорректная цена/);
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, 'Смета XLSX');
+});
+
+test('XLSX export handles a network failure without leaving the button busy', async () => {
+  const harness = createEditorHarness({
+    promotions: [], events: [], proposal: { client: { name: 'ООО Тест' }, items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000 }] },
+  }, { fetch: () => Promise.reject(new Error('offline')) });
+  const button = harness.elements.get('btnExportXlsx');
+  button.click('click');
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(harness.elements.get('toast').textContent, /соединение/i);
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, 'Смета XLSX');
 });

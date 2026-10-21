@@ -157,10 +157,11 @@ test('responsive and accessible contracts are explicit', () => {
   assert.match(fs.readFileSync('public/editor.js', 'utf8'), /Escape/);
 });
 
-test('export controls start disabled and explain their future availability', () => {
+test('export controls start disabled and explain current availability honestly', () => {
   assert.match(html, /id="btnExportPdf"[^>]*disabled/);
   assert.match(html, /id="btnExportXlsx"[^>]*disabled/);
-  assert.match(html, /Выгрузка PDF и Excel будет подключена на следующем этапе\./);
+  assert.match(html, /Смета XLSX доступна после заполнения обязательных полей\./);
+  assert.match(html, /PDF-предложение будет подключено на следующем этапе\./);
 });
 
 test('public projection strips every calculator-internal field', () => {

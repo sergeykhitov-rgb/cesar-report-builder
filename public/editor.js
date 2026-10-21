@@ -33,6 +33,28 @@
       }
     };
   }
+  function exportPayload(draft) {
+    var source = draft || {}, proposal = source.proposal || {}, computed = proposal.computed || {}, object = source.object || {};
+    var equipment = computed.equipment || {};
+    return {
+      client: { name: proposal.client && proposal.client.name },
+      object: { pin: object.pin, account: object.account, invoice: object.invoice, address: object.address },
+      generatedAt: new Date().toISOString(),
+      items: (equipment.items || proposal.items || []).map(publicItem),
+      discountPercent: proposal.discountPercent,
+      computed: {
+        equipment: { subtotal: equipment.subtotal, discountAmount: equipment.discountAmount, afterDiscount: equipment.afterDiscount },
+        installation: finalOnly(computed.installation), oneTime: finalOnly(computed.oneTime), monthlyFee: finalOnly(computed.monthlyFee), materialLiability: finalOnly(computed.materialLiability)
+      }
+    };
+  }
+  function downloadFilename(contentDisposition, fallback) {
+    var header = String(contentDisposition || '');
+    var extended = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+    if (extended) { try { return decodeURIComponent(extended[1].trim()); } catch (e) {} }
+    var plain = /filename\s*=\s*"([^"]+)"/i.exec(header) || /filename\s*=\s*([^;\s]+)/i.exec(header);
+    return plain ? plain[1] : fallback;
+  }
   function nextFocusAfterDelete(items, key) {
     var index = (items || []).findIndex(function (item) { return (item.identity || identity(item)) === key; });
     if (index === -1 || items.length <= 1) return 'equipmentSearch';
@@ -123,6 +145,8 @@
     reconcileOptions: reconcileOptions,
     optionsAfterSegmentChange: optionsAfterSegmentChange,
     publicReportProjection: publicReportProjection,
+    exportPayload: exportPayload,
+    downloadFilename: downloadFilename,
     nextFocusAfterDelete: nextFocusAfterDelete
   };
   root.CesarProposalUI = ProposalUI;
@@ -384,7 +408,13 @@
     var changes = computed.tariff && computed.tariff.automaticChanges || [];
     changes.forEach(function (change) { var note = document.createElement('p'); note.className = 'calculation-note'; note.textContent = 'Тариф изменён автоматически: ' + change.from + ' → ' + change.to + '. ' + change.reason + '.'; warnings.appendChild(note); });
     (computed.warnings || []).forEach(function (warning) { var note = document.createElement('p'); note.className = 'warning-item'; note.textContent = warning.message + ' Проверьте параметры расчёта.'; warnings.appendChild(note); });
-    ['btnExportPdf', 'btnExportXlsx'].forEach(function (id) { var button = document.getElementById(id); button.disabled = true; button.setAttribute('aria-disabled', 'true'); button.title = 'Выгрузка PDF и Excel будет подключена на следующем этапе.'; });
+    var pdfButton = document.getElementById('btnExportPdf');
+    pdfButton.disabled = true; pdfButton.setAttribute('aria-disabled', 'true'); pdfButton.title = 'PDF-предложение будет подключено на следующем этапе.';
+    var xlsxButton = document.getElementById('btnExportXlsx');
+    var xlsxEnabled = !editorBlocked && ProposalUI.isProposalValid(state.proposal);
+    xlsxButton.disabled = !xlsxEnabled;
+    xlsxButton.setAttribute('aria-disabled', xlsxEnabled ? 'false' : 'true');
+    xlsxButton.title = xlsxEnabled ? 'Скачать отдельную смету XLSX для каждой системы.' : 'Заполните обязательные поля и устраните ошибки расчёта.';
   }
   function renderOptionControls() {
     var host = document.getElementById('proposalOptions'), catalog = root.CESAR_CALCULATOR_CATALOGS.calculator;
@@ -611,6 +641,43 @@
   var linkInput = document.getElementById('linkInput');
   var linkOpen = document.getElementById('linkOpen');
   var btnGen = document.getElementById('btnGenerate');
+  var btnExportXlsx = document.getElementById('btnExportXlsx');
+
+  btnExportXlsx.addEventListener('click', function () {
+    if (editorBlocked) { showBlockedWarning(); return; }
+    var validationErrors = ProposalUI.publicationErrors(state.proposal);
+    if (validationErrors.length) { blockPublication(validationErrors[0]); return; }
+    var originalText = btnExportXlsx.textContent || 'Смета XLSX';
+    btnExportXlsx.disabled = true;
+    btnExportXlsx.setAttribute('aria-disabled', 'true');
+    btnExportXlsx.textContent = 'Готовим XLSX…';
+    fetch('/api/exports/xlsx', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ProposalUI.exportPayload(state))
+    }).then(function (response) {
+      if (response.ok) return response.blob().then(function (blob) { return { blob: blob, response: response }; });
+      return response.json().catch(function () { return {}; }).then(function (body) {
+        var error = new Error(body.errors && body.errors[0] && body.errors[0].message || 'Сервер отклонил данные сметы.');
+        error.status = response.status; throw error;
+      });
+    }).then(function (result) {
+      var type = result.response.headers && result.response.headers.get('content-type') || '';
+      var fallback = type.indexOf('zip') !== -1 ? 'Сметы оборудования.zip' : 'Смета оборудования.xlsx';
+      var filename = ProposalUI.downloadFilename(result.response.headers && result.response.headers.get('content-disposition'), fallback);
+      var url = URL.createObjectURL(result.blob);
+      var anchor = document.createElement('a');
+      anchor.href = url; anchor.download = filename; anchor.hidden = true;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    }).catch(function (error) {
+      toast(error && error.message && error.status === 422 ? error.message : 'Не удалось выгрузить смету. Проверьте соединение и повторите попытку.');
+    }).finally(function () {
+      btnExportXlsx.textContent = originalText;
+      var enabled = !editorBlocked && ProposalUI.isProposalValid(state.proposal);
+      btnExportXlsx.disabled = !enabled;
+      btnExportXlsx.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+    });
+  });
 
   function createDialogController(dialog, settings) {
     var trigger = null, open = false, backgrounds = settings.backgrounds || [];
