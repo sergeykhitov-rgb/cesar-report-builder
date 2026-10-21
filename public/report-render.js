@@ -62,6 +62,47 @@
     return html + '</div>';
   }
 
+  function rubles(value) {
+    return typeof value === 'number' && isFinite(value)
+      ? new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(value)
+      : '—';
+  }
+
+  function proposal(d) {
+    var p = d.proposal || {}, computed = p.computed || {};
+    var items = computed.equipment && Array.isArray(computed.equipment.items) ? computed.equipment.items : (Array.isArray(p.items) ? p.items : []);
+    items = items.filter(function (item) { return item && Number(item.quantity) > 0; });
+    if (!items.length) return '';
+    var groups = [];
+    items.forEach(function (item) {
+      var group = groups.find(function (candidate) { return candidate.system === item.system; });
+      if (!group) { group = { system: item.system, label: item.systemLabel || item.system, items: [] }; groups.push(group); }
+      group.items.push(item);
+    });
+    var client = p.client || {}, scenario = p.scenario || {};
+    var html = '<section class="rp-proposal"><div class="rp-section-h"><span class="label-red lbl">Коммерческое предложение</span><h2>Комплект безопасности</h2></div>';
+    if (has(client.name) || has(client.phone) || has(client.email)) html += '<div class="rp-proposal-client">' + row('Клиент', client.name) + row('Телефон', client.phone) + row('E-mail', client.email) + '</div>';
+    groups.forEach(function (group) {
+      html += '<div class="rp-spec"><h3>' + esc(group.label) + '</h3><div class="rp-spec-head"><span>Код и оборудование</span><span>Кол-во</span><span>Сумма</span></div>';
+      group.items.forEach(function (item) {
+        var name = [item.name, item.model].filter(has).join(' · ');
+        var total = typeof item.lineTotal === 'number' ? item.lineTotal : Number(item.quantity) * Number(item.installedUnitPrice);
+        html += '<div class="rp-spec-row"><div><b>' + esc(item.code) + '</b><span>' + esc(name) + '</span></div><strong>' + esc(item.quantity) + '</strong><strong>' + rubles(total) + '</strong></div>';
+      });
+      html += '</div>';
+    });
+    var equipment = computed.equipment || {}, installation = computed.installation || {}, oneTime = computed.oneTime || {}, monthly = computed.monthlyFee || {}, liability = computed.materialLiability || {};
+    html += '<div class="rp-proposal-summary"><div><span>Оборудование</span><strong>' + rubles(equipment.afterDiscount == null ? equipment.subtotal : equipment.afterDiscount) + '</strong></div>' +
+      '<div><span>Монтаж</span><strong>' + rubles(installation.final) + '</strong></div><div class="accent"><span>Разовый платёж</span><strong>' + rubles(oneTime.final) + '</strong></div>' +
+      '<div class="accent"><span>В месяц</span><strong>' + rubles(monthly.final) + '</strong></div><div><span>Материальная ответственность</span><strong>' + rubles(liability.final) + '</strong></div></div>';
+    var tariff = computed.tariff && computed.tariff.resolvedName || scenario.tariff;
+    var options = Array.isArray(p.selectedOptionNames) ? p.selectedOptionNames : [];
+    html += '<div class="rp-proposal-details">' + row('Тариф', tariff) + (options.length ? row('Опции', options.join(', ')) : '') + '</div>';
+    var selectedPromotions = (d.promotions || []).filter(function (item) { return item && has(item.title); });
+    if (selectedPromotions.length) html += '<div class="rp-proposal-promos"><span>Выбранные акции</span><strong>' + selectedPromotions.map(function (item) { return esc(item.title); }).join(' · ') + '</strong></div>';
+    return html + '</section>';
+  }
+
   function events(d) {
     var evs = (d.events || []).filter(function (e) {
       return has(e.signal) || has(e.date) || has(e.time) || has(e.address) || has(e.photo) || has(e.note);
@@ -125,7 +166,7 @@
     } else {
       block = card ? '<div class="rp-objwrap flow">' + card + '</div>' : '';
     }
-    return '<article class="report">' + head + block + stats(d) + promotions(d) + events(d) + footer(d) + '</article>';
+    return '<article class="report">' + head + block + stats(d) + proposal(d) + promotions(d) + events(d) + footer(d) + '</article>';
   }
 
   global.renderReport = renderReport;

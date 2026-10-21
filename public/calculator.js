@@ -105,6 +105,15 @@
         item[key] = field;
       }
     });
+    if (typeof item.system === 'string' && typeof item.code === 'string') {
+      item.identity = item.system + ':' + item.code;
+      if (!Number.isFinite(item.sourceInstalledUnitPrice) && Number.isFinite(item.installedUnitPrice)) {
+        item.sourceInstalledUnitPrice = item.installedUnitPrice;
+      }
+      item.priceOverridden = Number.isFinite(item.sourceInstalledUnitPrice) && Number.isFinite(item.installedUnitPrice)
+        ? item.sourceInstalledUnitPrice !== item.installedUnitPrice
+        : false;
+    }
     return item;
   }
 

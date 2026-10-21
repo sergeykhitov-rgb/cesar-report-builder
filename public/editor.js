@@ -1,6 +1,58 @@
 /* Конструктор отчётов — логика редактора */
-(function () {
+(function (root) {
   'use strict';
+  function identity(item) { return String(item.system || '') + ':' + String(item.code || ''); }
+  function unique(values) { return values.filter(function (value, index) { return value && values.indexOf(value) === index; }); }
+  var money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
+  var ProposalUI = {
+    filterEquipment: function (items, filters) {
+      var query = String(filters.query || '').trim().toLocaleLowerCase('ru');
+      var system = filters.system || '';
+      if (!system && query.length < 2) return [];
+      return (items || []).filter(function (item) {
+        if (system && item.system !== system) return false;
+        if (!query) return true;
+        return [item.code, item.name, item.model].some(function (value) { return String(value || '').toLocaleLowerCase('ru').indexOf(query) !== -1; });
+      }).slice(0, 30);
+    },
+    addEquipment: function (proposal, source) {
+      var key = identity(source);
+      var existing = (proposal.items || []).find(function (item) { return (item.identity || identity(item)) === key; });
+      if (existing) existing.quantity += 1;
+      else {
+        if (!Array.isArray(proposal.items)) proposal.items = [];
+        proposal.items.push({ identity: key, system: source.system, systemLabel: source.systemLabel, code: source.code,
+          name: source.name, model: source.model, unit: source.unit, quantity: 1,
+          installedUnitPrice: source.installedUnitPrice, sourceInstalledUnitPrice: source.installedUnitPrice, priceOverridden: false });
+      }
+      return proposal;
+    },
+    setQuantity: function (proposal, key, value) {
+      var numeric = Number(value);
+      var item = (proposal.items || []).find(function (entry) { return (entry.identity || identity(entry)) === key; });
+      if (!item || !Number.isSafeInteger(numeric) || numeric <= 0) return { valid: false, message: 'Количество должно быть целым числом больше нуля.' };
+      item.quantity = numeric; return { valid: true };
+    },
+    removeEquipment: function (proposal, key) { proposal.items = (proposal.items || []).filter(function (item) { return (item.identity || identity(item)) !== key; }); },
+    setManualPrice: function (proposal, key, value) {
+      var item = (proposal.items || []).find(function (entry) { return (entry.identity || identity(entry)) === key; });
+      var numeric = Number(value);
+      if (!item || !Number.isFinite(numeric) || numeric < 0) return false;
+      item.installedUnitPrice = numeric; item.priceOverridden = numeric !== item.sourceInstalledUnitPrice; return true;
+    },
+    resetManualPrice: function (proposal, key) { var item = (proposal.items || []).find(function (entry) { return (entry.identity || identity(entry)) === key; }); if (item) { item.installedUnitPrice = item.sourceInstalledUnitPrice; item.priceOverridden = false; } },
+    scenarioOptions: function (catalog, scenario) {
+      var rows = scenario.segment === 'B2B' ? (catalog.b2bTariffs || []) : (scenario.rent ? catalog.b2cRentalTariffs || [] : catalog.b2cTariffs || []);
+      return { regions: unique(rows.map(function (row) { return row.region; })), objectTypes: scenario.segment === 'B2B' ? [] : unique(rows.map(function (row) { return row.objectType; })), tariffs: unique(rows.map(function (row) { return row.name; })) };
+    },
+    compatibleValue: function (current, values) { return values.indexOf(current) === -1 ? '' : current; },
+    formatMoney: function (value) { return typeof value === 'number' && Number.isFinite(value) ? money.format(value) : '—'; },
+    overrideView: function (value) { return { calculated: ProposalUI.formatMoney(value && value.calculated), final: ProposalUI.formatMoney(value && value.final), badge: value && value.overridden ? 'Изменено вручную' : '' }; },
+    isProposalValid: function (proposal) { return !!(proposal && proposal.client && proposal.client.name && proposal.scenario && proposal.scenario.segment && proposal.scenario.region && (proposal.scenario.segment === 'B2B' || proposal.scenario.objectType) && proposal.items && proposal.items.some(function (item) { return item.quantity > 0; }) && proposal.computed && !(proposal.computed.warnings || []).some(function (warning) { return /^MISSING_|^INVALID_/.test(warning.code); })); }
+  };
+  root.CesarProposalUI = ProposalUI;
+  if (typeof module === 'object' && module.exports) module.exports.CesarProposalUI = ProposalUI;
+  if (typeof document === 'undefined') return;
   var LS_KEY = 'cesar_report_draft_v2';
   var DEFAULT_HERO = '/hero-default.jpg';
   var editorBlocked = false;
@@ -24,7 +76,7 @@
       email: 'a.meshenkov@cesar-satellite.ru',
       photo: ''
     },
-    proposal: window.CesarProposalState.createDefaultProposal()
+    proposal: root.CesarProposalState.createDefaultProposal()
   };
 
   var state = load();
@@ -32,7 +84,7 @@
   /* ---------- утилиты состояния ---------- */
   function recalculateProposal(draft) {
     var target = draft || state;
-    window.CesarProposalState.calculateProposal(target.proposal, window.CESAR_CALCULATOR_CATALOGS);
+    root.CesarProposalState.calculateProposal(target.proposal, root.CESAR_CALCULATOR_CATALOGS);
     return target;
   }
   function freshDraft() {
@@ -144,6 +196,123 @@
         save(); render();
       });
     });
+  }
+
+  /* ---------- калькулятор коммерческого предложения ---------- */
+  function option(select, value, label) {
+    var node = document.createElement('option'); node.value = value; node.textContent = label || value; select.appendChild(node);
+  }
+  function replaceOptions(select, values, current, emptyLabel) {
+    select.innerHTML = '';
+    if (emptyLabel) option(select, '', emptyLabel);
+    values.forEach(function (value) { option(select, value); });
+    select.value = ProposalUI.compatibleValue(current, values);
+    if (!select.value && values.length && !emptyLabel) select.value = values[0];
+    return select.value;
+  }
+  function commitProposal() {
+    if (editorBlocked) { showBlockedWarning(); return; }
+    renderScenarioControls();
+    recalculateProposal(); save(); render(); renderCalculator();
+  }
+  function renderScenarioControls() {
+    var proposal = state.proposal, scenario = proposal.scenario;
+    document.querySelectorAll('[name="proposalSegment"]').forEach(function (radio) { radio.checked = radio.value === scenario.segment; });
+    document.getElementById('proposalRent').checked = scenario.rent;
+    var available = ProposalUI.scenarioOptions(root.CESAR_CALCULATOR_CATALOGS.calculator, scenario);
+    scenario.region = replaceOptions(document.getElementById('proposalRegion'), available.regions, scenario.region);
+    var objects = available.objectTypes;
+    scenario.objectType = replaceOptions(document.getElementById('proposalObjectType'), objects, scenario.objectType, scenario.segment === 'B2B' ? 'Не применяется' : 'Выберите объект');
+    document.getElementById('proposalObjectType').disabled = scenario.segment === 'B2B';
+    var regionalCatalog = scenario.segment === 'B2B' ? root.CESAR_CALCULATOR_CATALOGS.calculator.b2bTariffs : (scenario.rent ? root.CESAR_CALCULATOR_CATALOGS.calculator.b2cRentalTariffs : root.CESAR_CALCULATOR_CATALOGS.calculator.b2cTariffs);
+    var tariffs = regionalCatalog.filter(function (row) { return row.region === scenario.region && (scenario.segment === 'B2B' || row.objectType === scenario.objectType); }).map(function (row) { return row.name; });
+    tariffs = unique(tariffs);
+    scenario.tariff = replaceOptions(document.getElementById('proposalTariff'), tariffs, scenario.tariff);
+  }
+  function renderSearchResults() {
+    var results = document.getElementById('equipmentResults');
+    var search = document.getElementById('equipmentSearch');
+    var system = document.getElementById('equipmentSystemFilter').value;
+    var found = ProposalUI.filterEquipment(root.CESAR_CALCULATOR_CATALOGS.equipment.items, { query: search.value, system: system });
+    results.innerHTML = '';
+    search.setAttribute('aria-expanded', found.length ? 'true' : 'false');
+    if (!system && search.value.trim().length < 2) { var help = document.createElement('p'); help.className = 'empty-state'; help.textContent = 'Введите минимум 2 символа или выберите систему.'; results.appendChild(help); return; }
+    if (!found.length) { var empty = document.createElement('p'); empty.className = 'empty-state'; empty.textContent = 'Ничего не найдено. Измените запрос или систему.'; results.appendChild(empty); return; }
+    found.forEach(function (item) {
+      var button = document.createElement('button'); button.type = 'button'; button.className = 'equipment-result'; button.setAttribute('role', 'option');
+      var main = document.createElement('span'); main.className = 'equipment-result-main'; main.textContent = item.code + ' · ' + item.name;
+      var meta = document.createElement('span'); meta.className = 'equipment-result-meta'; meta.textContent = [item.systemLabel, item.model, ProposalUI.formatMoney(item.installedUnitPrice)].filter(Boolean).join(' · ');
+      button.appendChild(main); button.appendChild(meta);
+      button.addEventListener('click', function () { ProposalUI.addEquipment(state.proposal, item); commitProposal(); });
+      results.appendChild(button);
+    });
+  }
+  function renderSelectedEquipment() {
+    var host = document.getElementById('selectedEquipment'); host.innerHTML = '';
+    if (!state.proposal.items.length) { var empty = document.createElement('p'); empty.className = 'empty-state'; empty.textContent = 'Оборудование ещё не добавлено.'; host.appendChild(empty); return; }
+    state.proposal.items.forEach(function (item) {
+      var key = item.identity || identity(item), card = document.createElement('article'); card.className = 'spec-row';
+      function cell(label, text, className) { var node = document.createElement('div'); node.className = className || ''; node.setAttribute('data-label', label); node.textContent = text; card.appendChild(node); }
+      cell('Код', item.code, 'spec-code'); cell('Модель и наименование', [item.model, item.name].filter(Boolean).join(' · '), 'spec-name');
+      var quantity = document.createElement('div'); quantity.className = 'spec-quantity'; quantity.setAttribute('data-label', 'Количество');
+      var minus = document.createElement('button'); minus.type = 'button'; minus.textContent = '−'; minus.setAttribute('aria-label', 'Уменьшить количество');
+      var input = document.createElement('input'); input.type = 'number'; input.min = '1'; input.step = '1'; input.value = item.quantity; input.setAttribute('aria-label', 'Количество ' + item.name);
+      var plus = document.createElement('button'); plus.type = 'button'; plus.textContent = '+'; plus.setAttribute('aria-label', 'Увеличить количество');
+      var error = document.createElement('small'); error.className = 'row-error';
+      minus.addEventListener('click', function () { if (item.quantity > 1) { ProposalUI.setQuantity(state.proposal, key, item.quantity - 1); commitProposal(); } });
+      plus.addEventListener('click', function () { ProposalUI.setQuantity(state.proposal, key, item.quantity + 1); commitProposal(); });
+      input.addEventListener('change', function () { var result = ProposalUI.setQuantity(state.proposal, key, input.value); if (!result.valid) { error.textContent = result.message; input.value = item.quantity; } else commitProposal(); });
+      quantity.appendChild(minus); quantity.appendChild(input); quantity.appendChild(plus); quantity.appendChild(error); card.appendChild(quantity);
+      var price = document.createElement('div'); price.className = 'spec-price'; price.setAttribute('data-label', 'Цена за ед.');
+      var priceInput = document.createElement('input'); priceInput.type = 'number'; priceInput.min = '0'; priceInput.value = item.installedUnitPrice; priceInput.setAttribute('aria-label', 'Цена ' + item.name);
+      var source = document.createElement('small'); source.textContent = 'Из справочника: ' + ProposalUI.formatMoney(item.sourceInstalledUnitPrice == null ? item.installedUnitPrice : item.sourceInstalledUnitPrice);
+      var priceReset = document.createElement('button'); priceReset.type = 'button'; priceReset.className = 'reset-value'; priceReset.textContent = item.priceOverridden ? 'Изменено вручную · сбросить' : 'По справочнику'; priceReset.disabled = !item.priceOverridden;
+      priceInput.addEventListener('change', function () { if (ProposalUI.setManualPrice(state.proposal, key, priceInput.value)) commitProposal(); });
+      priceReset.addEventListener('click', function () { ProposalUI.resetManualPrice(state.proposal, key); commitProposal(); });
+      price.appendChild(priceInput); price.appendChild(source); price.appendChild(priceReset); card.appendChild(price);
+      cell('Сумма', ProposalUI.formatMoney(item.quantity * item.installedUnitPrice), 'spec-total');
+      var del = document.createElement('button'); del.type = 'button'; del.className = 'spec-delete'; del.textContent = 'Удалить'; del.addEventListener('click', function () { ProposalUI.removeEquipment(state.proposal, key); commitProposal(); }); card.appendChild(del);
+      host.appendChild(card);
+    });
+  }
+  function totalRow(host, label, value, emphasized, override) { var row = document.createElement('div'); row.className = 'total-row' + (emphasized ? ' total-final' : ''); var key = document.createElement('span'); key.textContent = label; if (override && override.overridden) { var badge = document.createElement('small'); badge.className = 'manual-badge'; badge.textContent = 'Изменено вручную · расчёт ' + ProposalUI.formatMoney(override.calculated); key.appendChild(badge); } var amount = document.createElement('strong'); amount.textContent = ProposalUI.formatMoney(value); row.appendChild(key); row.appendChild(amount); host.appendChild(row); }
+  function renderTotals() {
+    var computed = state.proposal.computed || {}, equipment = computed.equipment || {}, host = document.getElementById('proposalTotals'); host.innerHTML = '';
+    totalRow(host, 'Оборудование', equipment.subtotal); totalRow(host, 'Скидка', equipment.discountAmount ? -equipment.discountAmount : 0); totalRow(host, 'Монтаж', computed.installation && computed.installation.final, false, computed.installation);
+    totalRow(host, 'Разовый платёж', computed.oneTime && computed.oneTime.final, true); totalRow(host, 'В месяц', computed.monthlyFee && computed.monthlyFee.final, true, computed.monthlyFee); totalRow(host, 'Материальная ответственность', computed.materialLiability && computed.materialLiability.final, true, computed.materialLiability);
+    [ ['installation', computed.installation], ['monthlyFee', computed.monthlyFee], ['materialLiability', computed.materialLiability] ].forEach(function (entry) { var input = document.getElementById('override' + entry[0][0].toUpperCase() + entry[0].slice(1)); if (entry[1] && entry[1].overridden) input.classList.add('is-overridden'); else input.classList.remove('is-overridden'); });
+    var warnings = document.getElementById('proposalWarnings'); warnings.innerHTML = '';
+    var changes = computed.tariff && computed.tariff.automaticChanges || [];
+    changes.forEach(function (change) { var note = document.createElement('p'); note.className = 'calculation-note'; note.textContent = 'Тариф изменён автоматически: ' + change.from + ' → ' + change.to + '. ' + change.reason + '.'; warnings.appendChild(note); });
+    (computed.warnings || []).forEach(function (warning) { var note = document.createElement('p'); note.className = 'warning-item'; note.textContent = warning.message + ' Проверьте параметры расчёта.'; warnings.appendChild(note); });
+    var valid = ProposalUI.isProposalValid(state.proposal); ['btnExportPdf', 'btnExportXlsx'].forEach(function (id) { var button = document.getElementById(id); button.disabled = !valid; button.setAttribute('aria-disabled', String(!valid)); button.title = 'Выгрузка будет доступна после сохранения расчёта'; });
+  }
+  function renderCalculator() {
+    renderScenarioControls();
+    var p = state.proposal;
+    document.getElementById('proposalCameraCount').value = p.counts.cameraCount;
+    document.getElementById('proposalHouseholdSensors').value = p.counts.additionalHouseholdSensors;
+    document.getElementById('proposalSecuritySensors').value = p.counts.additionalSecuritySensors;
+    document.getElementById('proposalDiscount').value = p.discountPercent;
+    document.querySelectorAll('#proposalOptions input').forEach(function (input) { input.checked = p.selectedOptionNames.indexOf(input.value) !== -1; });
+    [['overrideInstallation','installationOverride'],['overrideMonthlyFee','monthlyFeeOverride'],['overrideMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { var value = p.overrides[binding[1]]; document.getElementById(binding[0]).value = value == null ? '' : value; });
+    renderSelectedEquipment(); renderTotals();
+  }
+  function bindCalculator() {
+    var catalog = root.CESAR_CALCULATOR_CATALOGS.calculator, equipmentCatalog = root.CESAR_CALCULATOR_CATALOGS.equipment.items;
+    var systemSelect = document.getElementById('equipmentSystemFilter'); unique(equipmentCatalog.map(function (item) { return item.system; })).forEach(function (system) { var first = equipmentCatalog.find(function (item) { return item.system === system; }); option(systemSelect, system, first.systemLabel); });
+    catalog.discounts.filter(function (discount) { return Number.isFinite(discount.percent); }).forEach(function (discount) { option(document.getElementById('proposalDiscount'), discount.percent, discount.percent + ' %'); });
+    catalog.options.forEach(function (item, index) { var label = document.createElement('label'); label.className = 'option-check'; var input = document.createElement('input'); input.type = 'checkbox'; input.value = item.name; input.id = 'proposalOption' + index; var text = document.createElement('span'); text.textContent = item.name + ' · ' + ProposalUI.formatMoney(item.monthlyPrice) + '/мес.'; label.appendChild(input); label.appendChild(text); document.getElementById('proposalOptions').appendChild(label); input.addEventListener('change', function () { state.proposal.selectedOptionNames = Array.from(document.querySelectorAll('#proposalOptions input:checked')).map(function (node) { return node.value; }); commitProposal(); }); });
+    document.querySelectorAll('[name="proposalSegment"]').forEach(function (radio) { radio.addEventListener('change', function () { if (radio.checked) { state.proposal.scenario.segment = radio.value; commitProposal(); } }); });
+    document.getElementById('proposalRent').addEventListener('change', function (event) { state.proposal.scenario.rent = event.target.checked; commitProposal(); });
+    [['proposalRegion','region'],['proposalObjectType','objectType'],['proposalTariff','tariff']].forEach(function (binding) { document.getElementById(binding[0]).addEventListener('change', function (event) { state.proposal.scenario[binding[1]] = event.target.value; commitProposal(); }); });
+    [['proposalCameraCount','cameraCount'],['proposalHouseholdSensors','additionalHouseholdSensors'],['proposalSecuritySensors','additionalSecuritySensors']].forEach(function (binding) { document.getElementById(binding[0]).addEventListener('change', function (event) { state.proposal.counts[binding[1]] = event.target.value; commitProposal(); }); });
+    document.getElementById('proposalDiscount').addEventListener('change', function (event) { state.proposal.discountPercent = event.target.value; commitProposal(); });
+    document.getElementById('equipmentSearch').addEventListener('input', renderSearchResults); systemSelect.addEventListener('change', renderSearchResults);
+    [['overrideInstallation','installationOverride'],['overrideMonthlyFee','monthlyFeeOverride'],['overrideMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { var input = document.getElementById(binding[0]); input.addEventListener('change', function () { state.proposal.overrides[binding[1]] = input.value; commitProposal(); }); });
+    [['resetInstallation','installationOverride'],['resetMonthlyFee','monthlyFeeOverride'],['resetMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { document.getElementById(binding[0]).addEventListener('click', function () { root.CesarProposalState.resetOverride(state.proposal, binding[1], root.CESAR_CALCULATOR_CATALOGS); document.getElementById('override' + binding[0].slice(5)).value = ''; save(); render(); renderCalculator(); }); });
+    ['btnExportPdf','btnExportXlsx'].forEach(function (id) { document.getElementById(id).addEventListener('click', function () { toast('Выгрузка будет доступна после сохранения расчёта'); }); });
+    renderCalculator();
   }
 
   /* ---------- фото-пикеры (обложка, менеджер) ---------- */
@@ -388,14 +557,15 @@
     document.querySelectorAll('[data-path]').forEach(function (el) {
       var v = getPath(state, el.getAttribute('data-path')); el.value = v == null ? '' : v;
     });
-    bindPhotoPickers(); renderPromotions(); renderEvents(); render();
+    bindPhotoPickers(); renderPromotions(); renderEvents(); renderCalculator(); render();
   }
 
   /* ---------- старт ---------- */
   bindFields();
+  if (!editorBlocked) bindCalculator();
   bindPhotoPickers();
   renderPromotions();
   renderEvents();
   render();
   showBlockedWarning();
-})();
+})(typeof window !== 'undefined' ? window : globalThis);

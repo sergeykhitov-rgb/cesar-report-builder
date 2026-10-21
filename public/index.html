@@ -65,6 +65,62 @@
           </div>
         </div>
 
+        <section class="fgroup proposal-section" aria-labelledby="clientObjectHeading">
+          <div class="fgroup-h"><h2 id="clientObjectHeading">Клиент и объект</h2><span class="section-step">01</span></div>
+          <div class="grid2">
+            <label class="field"><span>Организация или имя</span><input id="proposalClientName" data-path="proposal.client.name" autocomplete="organization"></label>
+            <label class="field"><span>Телефон</span><input id="proposalClientPhone" data-path="proposal.client.phone" type="tel" autocomplete="tel"></label>
+          </div>
+          <label class="field"><span>E-mail</span><input id="proposalClientEmail" data-path="proposal.client.email" type="email" autocomplete="email"></label>
+          <p class="section-note">PIN, владелец и адрес объекта используются из карточки выше.</p>
+        </section>
+
+        <section class="fgroup proposal-section" aria-labelledby="scenarioHeading">
+          <div class="fgroup-h"><h2 id="scenarioHeading">Параметры расчёта</h2><span class="section-step">02</span></div>
+          <fieldset class="segment-control"><legend>Сегмент</legend>
+            <label><input type="radio" id="proposalSegment" name="proposalSegment" value="B2C"><span>B2C</span></label>
+            <label><input type="radio" name="proposalSegment" value="B2B"><span>B2B</span></label>
+          </fieldset>
+          <div class="grid2">
+            <label class="field"><span>Регион</span><select id="proposalRegion"></select></label>
+            <label class="field"><span>Тип объекта</span><select id="proposalObjectType"></select></label>
+          </div>
+          <label class="switch-row" for="proposalRent"><span><strong>Аренда оборудования</strong><small>Выключено — покупка</small></span><input id="proposalRent" type="checkbox"></label>
+        </section>
+
+        <section class="fgroup proposal-section" aria-labelledby="equipmentHeading">
+          <div class="fgroup-h"><h2 id="equipmentHeading">Комплект и оборудование</h2><span class="section-step">03</span></div>
+          <div class="grid2 equipment-search-controls">
+            <label class="field"><span>Система</span><select id="equipmentSystemFilter"><option value="">Все системы</option></select></label>
+            <label class="field"><span>Поиск по коду, названию или модели</span><input id="equipmentSearch" type="search" autocomplete="off" aria-controls="equipmentResults" aria-expanded="false" placeholder="Минимум 2 символа"></label>
+          </div>
+          <div id="equipmentResults" class="equipment-results" role="listbox" aria-label="Результаты поиска"><p class="empty-state">Введите минимум 2 символа или выберите систему.</p></div>
+          <div id="selectedEquipment" class="selected-equipment" aria-label="Выбранная спецификация"><p class="empty-state">Оборудование ещё не добавлено.</p></div>
+        </section>
+
+        <section class="fgroup proposal-section" aria-labelledby="tariffHeading">
+          <div class="fgroup-h"><h2 id="tariffHeading">Тариф и услуги</h2><span class="section-step">04</span></div>
+          <label class="field"><span>Тариф</span><select id="proposalTariff"></select></label>
+          <div class="grid3 count-grid">
+            <label class="field"><span>Камеры</span><input id="proposalCameraCount" type="number" min="0" step="1"></label>
+            <label class="field"><span>Бытовые датчики</span><input id="proposalHouseholdSensors" type="number" min="0" step="1"></label>
+            <label class="field"><span>Охранные датчики</span><input id="proposalSecuritySensors" type="number" min="0" step="1"></label>
+          </div>
+          <fieldset class="option-list"><legend>Ежемесячные опции</legend><div id="proposalOptions"></div></fieldset>
+          <label class="field"><span>Скидка на оборудование</span><select id="proposalDiscount"></select></label>
+        </section>
+
+        <section class="fgroup proposal-section calculation-section" aria-labelledby="totalsHeading">
+          <div class="fgroup-h"><h2 id="totalsHeading">Расчёт</h2><span class="section-step">05</span></div>
+          <div id="proposalTotals" class="proposal-totals" aria-live="polite"></div>
+          <div class="override-grid">
+            <label class="field"><span>Монтаж вручную, ₽</span><input id="overrideInstallation" type="number" min="0"><button id="resetInstallation" type="button" class="reset-value">Сбросить</button></label>
+            <label class="field"><span>Абонентская плата вручную, ₽</span><input id="overrideMonthlyFee" type="number" min="0"><button id="resetMonthlyFee" type="button" class="reset-value">Сбросить</button></label>
+            <label class="field"><span>Материальная ответственность вручную, ₽</span><input id="overrideMaterialLiability" type="number" min="0"><button id="resetMaterialLiability" type="button" class="reset-value">Сбросить</button></label>
+          </div>
+          <div id="proposalWarnings" class="proposal-warnings" aria-live="polite"></div>
+        </section>
+
         <div class="fgroup">
           <div class="fgroup-h">
             <span class="label-red">Акции</span>
@@ -99,6 +155,15 @@
             </span>
           </label>
         </div>
+
+        <section class="fgroup proposal-section documents-section" aria-labelledby="documentsHeading">
+          <div class="fgroup-h"><h2 id="documentsHeading">Документы</h2><span class="section-step">06</span></div>
+          <p class="section-note">Выгрузка будет доступна после сохранения расчёта.</p>
+          <div class="document-actions">
+            <button id="btnExportPdf" type="button" class="btn btn-red" disabled title="Выгрузка будет доступна после сохранения расчёта">PDF-предложение</button>
+            <button id="btnExportXlsx" type="button" class="btn btn-ghost" disabled title="Выгрузка будет доступна после сохранения расчёта">Смета XLSX</button>
+          </div>
+        </section>
 
         <div class="form-foot">Данные сохраняются в вашем браузере автоматически.</div>
       </div>

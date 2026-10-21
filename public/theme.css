@@ -44,6 +44,9 @@ img, svg, video { display: block; max-width: 100%; }
 button, input, textarea, select { font-family: inherit; font-size: inherit; color: inherit; }
 button { cursor: pointer; border: none; background: none; }
 a { color: inherit; text-decoration: none; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 3px solid rgba(227,6,19,.28); outline-offset: 2px;
+}
 
 /* ---------- типографика бренда ---------- */
 .eyebrow {
@@ -202,6 +205,29 @@ a { color: inherit; text-decoration: none; }
 .rp-mgr-contacts { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(0,0,0,.06); display: grid; gap: 5px; font-size: 13.5px; font-weight: 600; }
 .rp-mgr-contacts a { color: var(--ink); }
 
+/* клиентская спецификация коммерческого предложения */
+.rp-proposal { margin-top: var(--pad); border-top: 1px solid var(--line); }
+.rp-proposal-client, .rp-proposal-details { margin: 16px var(--pad) 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 18px; }
+.rp-proposal-client .rp-row, .rp-proposal-details .rp-row { display: grid; gap: 2px; }
+.rp-proposal-client .k, .rp-proposal-details .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+.rp-proposal-client .v, .rp-proposal-details .v { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.rp-spec { margin: 18px var(--pad) 0; border: 1px solid var(--line); }
+.rp-spec h3 { padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.rp-spec-head, .rp-spec-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px 110px; gap: 12px; align-items: center; padding: 9px 14px; }
+.rp-spec-head { color: var(--muted); background: #f7f8fa; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.rp-spec-row { border-top: 1px solid var(--line-soft); font-size: 12px; }
+.rp-spec-row > div { display: grid; grid-template-columns: 70px 1fr; gap: 8px; min-width: 0; }
+.rp-spec-row span { overflow-wrap: anywhere; }
+.rp-spec-row > strong { text-align: right; }
+.rp-proposal-summary { margin: 18px var(--pad) 0; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); }
+.rp-proposal-summary > div { display: grid; gap: 5px; min-height: 76px; padding: 13px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.rp-proposal-summary span { color: var(--muted); font-size: 10px; }
+.rp-proposal-summary strong { font-size: 15px; }
+.rp-proposal-summary .accent strong { color: var(--red); font-size: 18px; }
+.rp-proposal-promos { margin: 14px var(--pad) 0; padding: 12px 14px; display: grid; gap: 3px; background: #fff9db; border-left: 3px solid var(--yellow); }
+.rp-proposal-promos span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.rp-proposal-promos strong { font-size: 12px; }
+
 @media (max-width: 640px) {
   .report { --pad: 22px; border-radius: 16px; }
   .rp-head { gap: 12px; }
@@ -214,6 +240,10 @@ a { color: inherit; text-decoration: none; }
   .rp-promotions { grid-template-columns: 1fr; }
   .rp-foot-grid { grid-template-columns: 1fr; }
   .rp-mgr { min-width: 0; }
+  .rp-proposal-client, .rp-proposal-details, .rp-proposal-summary { grid-template-columns: 1fr; }
+  .rp-spec-head { display: none; }
+  .rp-spec-row { grid-template-columns: 1fr auto; }
+  .rp-spec-row > div { grid-column: 1 / -1; grid-template-columns: 60px 1fr; }
 }
 
 @media print {
