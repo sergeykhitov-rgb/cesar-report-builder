@@ -1,0 +1,226 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const vm = require('node:vm');
+const { execFileSync } = require('node:child_process');
+
+const ROOT = path.resolve(__dirname, '..');
+const PRIORITY_IDS = ['two-objects', 'refer-friend', 'prepayment'];
+
+function loadBrowserScript(relativePath, context = {}) {
+  context.window = context;
+  context.globalThis = context;
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT, relativePath), 'utf8'), context);
+  return context;
+}
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function loadPromotions() {
+  return loadBrowserScript('public/promotions.js');
+}
+
+function loadState() {
+  delete require.cache[require.resolve('../public/calculator.js')];
+  return require('../public/calculator.js');
+}
+
+function catalogs() {
+  return {
+    ...JSON.parse(fs.readFileSync(path.join(ROOT, 'data/catalogs/calculator.json'), 'utf8')),
+    equipment: JSON.parse(fs.readFileSync(path.join(ROOT, 'data/catalogs/equipment.json'), 'utf8')),
+  };
+}
+
+test('default proposal has an explicit schema and returns independent deep clones', () => {
+  const state = loadState();
+  const first = state.createDefaultProposal();
+  const second = state.createDefaultProposal();
+
+  assert.deepEqual(Object.keys(first), [
+    'schemaVersion', 'client', 'scenario', 'items', 'selectedOptionNames',
+    'discountPercent', 'counts', 'overrides', 'computed', 'exportMetadata',
+  ]);
+  assert.equal(first.schemaVersion, 1);
+  assert.deepEqual(first.client, { name: '', phone: '', email: '' });
+  assert.deepEqual(first.scenario, {
+    segment: 'B2C', region: 'Москва/МО, ЦФО', objectType: 'Квартира', tariff: 'Базовый', rent: false,
+    baseMonthlyFee: null, installationCalculated: null,
+  });
+  assert.deepEqual(first.items, []);
+  assert.deepEqual(first.selectedOptionNames, []);
+  assert.deepEqual(first.counts, {
+    cameraCount: 0, additionalHouseholdSensors: 0, additionalSecuritySensors: 0, baseSecuritySensorCount: 0,
+  });
+  assert.deepEqual(first.overrides, {
+    monthlyFeeOverride: null, installationOverride: null, materialLiabilityOverride: null,
+  });
+  assert.deepEqual(first.exportMetadata, { generatedAt: null, generatedBy: null });
+
+  first.client.name = 'Изменено';
+  first.items.push({ code: 'x' });
+  first.counts.cameraCount = 3;
+  assert.equal(second.client.name, '');
+  assert.deepEqual(second.items, []);
+  assert.equal(second.counts.cameraCount, 0);
+});
+
+test('legacy draft migration adds proposal without losing report fields', () => {
+  const state = loadState();
+  const legacy = { title: 'Старый отчёт', object: { pin: '123' }, events: [{ note: 'Сохранить' }], promotions: [] };
+  const migrated = state.ensureDraft(legacy, { isNewDraft: false });
+
+  assert.equal(migrated.title, 'Старый отчёт');
+  assert.equal(migrated.object.pin, '123');
+  assert.equal(migrated.events[0].note, 'Сохранить');
+  assert.deepEqual(migrated.promotions, []);
+  assert.equal(migrated.proposal.schemaVersion, 1);
+});
+
+test('malformed proposal collections and records normalize to safe shapes', () => {
+  const state = loadState();
+  const normalized = state.normalizeProposal({
+    client: null,
+    scenario: [],
+    items: { bad: true },
+    selectedOptionNames: 'camera',
+    counts: null,
+    overrides: [],
+    computed: [],
+    exportMetadata: 'bad',
+  });
+
+  assert.deepEqual(normalized.client, { name: '', phone: '', email: '' });
+  assert.equal(Array.isArray(normalized.items), true);
+  assert.deepEqual(normalized.items, []);
+  assert.deepEqual(normalized.selectedOptionNames, []);
+  assert.deepEqual(normalized.counts, {
+    cameraCount: 0, additionalHouseholdSensors: 0, additionalSecuritySensors: 0, baseSecuritySensorCount: 0,
+  });
+  assert.deepEqual(normalized.overrides, {
+    monthlyFeeOverride: null, installationOverride: null, materialLiabilityOverride: null,
+  });
+  assert.equal(normalized.computed, null);
+  assert.deepEqual(normalized.exportMetadata, { generatedAt: null, generatedBy: null });
+});
+
+test('malformed item entries are discarded before calculation', () => {
+  const state = loadState();
+  const proposal = state.normalizeProposal({
+    items: [null, 'bad', { code: 'valid', quantity: 0, installedUnitPrice: 100 }],
+  });
+
+  assert.deepEqual(proposal.items, [{ code: 'valid', quantity: 0, installedUnitPrice: 100 }]);
+  assert.doesNotThrow(() => state.calculateProposal(proposal, catalogs()));
+});
+
+test('priority promotions are selected only for a new draft and copy all catalog fields', () => {
+  const promotionContext = loadPromotions();
+  global.CESAR_PROMOTIONS = promotionContext.CESAR_PROMOTIONS;
+  global.CESAR_PRIORITY_PROMOTIONS = promotionContext.CESAR_PRIORITY_PROMOTIONS;
+  const state = loadState();
+
+  const fresh = state.ensureDraft({}, { isNewDraft: true });
+  assert.deepEqual(plain(fresh.promotions.map(item => item.id)), PRIORITY_IDS);
+  fresh.promotions.forEach(item => assert.deepEqual(Object.keys(item), ['id', 'title', 'description', 'image', 'priority']));
+
+  const explicitEmpty = state.ensureDraft({ promotions: [] }, { isNewDraft: false });
+  assert.deepEqual(explicitEmpty.promotions, []);
+  delete global.CESAR_PROMOTIONS;
+  delete global.CESAR_PRIORITY_PROMOTIONS;
+});
+
+test('promotion priority contract is exact, numeric, and picker order is stable', () => {
+  const context = loadPromotions();
+  assert.deepEqual(plain(context.CESAR_PRIORITY_PROMOTIONS), PRIORITY_IDS);
+  context.CESAR_PROMOTIONS.forEach(item => assert.equal(typeof item.priority, 'number', item.id));
+
+  const sorted = context.CESAR_PROMOTIONS
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => b.item.priority - a.item.priority || a.index - b.index)
+    .map(entry => entry.item.id);
+  assert.deepEqual(plain(sorted.slice(0, 3)), PRIORITY_IDS);
+});
+
+test('deselected default stays absent when an existing draft is normalized again', () => {
+  const promotionContext = loadPromotions();
+  global.CESAR_PROMOTIONS = promotionContext.CESAR_PROMOTIONS;
+  global.CESAR_PRIORITY_PROMOTIONS = promotionContext.CESAR_PRIORITY_PROMOTIONS;
+  const state = loadState();
+  const fresh = state.ensureDraft({}, { isNewDraft: true });
+  fresh.promotions = fresh.promotions.filter(item => item.id !== 'refer-friend');
+
+  const reloaded = state.ensureDraft(plain(fresh), { isNewDraft: false });
+  assert.deepEqual(reloaded.promotions.map(item => item.id), ['two-objects', 'prepayment']);
+  delete global.CESAR_PROMOTIONS;
+  delete global.CESAR_PRIORITY_PROMOTIONS;
+});
+
+test('calculation updates the computed snapshot from normalized proposal input', () => {
+  const state = loadState();
+  const proposal = state.createDefaultProposal();
+  proposal.counts.cameraCount = 3;
+
+  const updated = state.calculateProposal(proposal, catalogs());
+  assert.strictEqual(updated, proposal);
+  assert.equal(proposal.computed.tariff.resolvedName, 'Видео Базовый');
+  assert.equal(proposal.computed.monthlyFee.final, 2800);
+});
+
+test('reset override clears allowed fields, recalculates, and rejects unknown fields', () => {
+  const state = loadState();
+  global.CESAR_CALCULATOR_CATALOGS = catalogs();
+  const proposal = state.createDefaultProposal();
+  proposal.overrides.monthlyFeeOverride = 0;
+  state.calculateProposal(proposal, catalogs());
+  assert.equal(proposal.computed.monthlyFee.final, 0);
+
+  state.resetOverride(proposal, 'monthlyFeeOverride');
+  assert.equal(proposal.overrides.monthlyFeeOverride, null);
+  assert.equal(proposal.computed.monthlyFee.final, 1990);
+  assert.throws(() => state.resetOverride(proposal, 'unknownOverride'), /unknownOverride/);
+  delete global.CESAR_CALCULATOR_CATALOGS;
+});
+
+test('generated browser catalogs exactly match sources and builder output is deterministic', () => {
+  const sourceCalculator = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/catalogs/calculator.json'), 'utf8'));
+  const sourceEquipment = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/catalogs/equipment.json'), 'utf8'));
+  const generatedContext = loadBrowserScript('public/calculator-catalogs.js');
+  assert.deepEqual(plain(generatedContext.CESAR_CALCULATOR_CATALOGS), {
+    calculator: sourceCalculator,
+    equipment: sourceEquipment,
+  });
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cesar-calculator-catalogs-'));
+  const first = path.join(tempDir, 'first.js');
+  const second = path.join(tempDir, 'second.js');
+  execFileSync(process.execPath, ['scripts/build-calculator-catalogs.js', first], { cwd: ROOT });
+  execFileSync(process.execPath, ['scripts/build-calculator-catalogs.js', second], { cwd: ROOT });
+  assert.equal(fs.readFileSync(first, 'utf8'), fs.readFileSync(second, 'utf8'));
+  assert.equal(fs.readFileSync(first, 'utf8'), fs.readFileSync(path.join(ROOT, 'public/calculator-catalogs.js'), 'utf8'));
+});
+
+test('index loads calculator dependencies before renderer and editor', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+  const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(scripts.slice(-6), [
+    '/promotions.js',
+    '/calculator-catalogs.js',
+    '/calculator-engine.js',
+    '/calculator.js',
+    '/report-render.js',
+    '/editor.js',
+  ]);
+});
+
+test('editor default includes proposal and uses state migration for saved and fresh drafts', () => {
+  const editor = fs.readFileSync(path.join(ROOT, 'public/editor.js'), 'utf8');
+  assert.match(editor, /proposal:\s*window\.CesarProposalState\.createDefaultProposal\(\)/);
+  assert.match(editor, /ensureDraft\(draft,\s*\{ isNewDraft: false \}\)/);
+  assert.match(editor, /ensureDraft\(JSON\.parse\(JSON\.stringify\(DEFAULT\)\),\s*\{ isNewDraft: true \}\)/);
+  assert.match(editor, /calculateProposal\(target\.proposal,\s*window\.CESAR_CALCULATOR_CATALOGS\)/);
+});

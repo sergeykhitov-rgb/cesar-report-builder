@@ -21,19 +21,34 @@
       phone: '+7 495 785 53 53 · доб. 4311',
       email: 'a.meshenkov@cesar-satellite.ru',
       photo: ''
-    }
+    },
+    proposal: window.CesarProposalState.createDefaultProposal()
   };
 
   var state = load();
-  if (!Array.isArray(state.promotions)) state.promotions = [];
 
   /* ---------- утилиты состояния ---------- */
+  function recalculateProposal(draft) {
+    var target = draft || state;
+    window.CesarProposalState.calculateProposal(target.proposal, window.CESAR_CALCULATOR_CATALOGS);
+    return target;
+  }
+  function freshDraft() {
+    var draft = window.CesarProposalState.ensureDraft(JSON.parse(JSON.stringify(DEFAULT)), { isNewDraft: true });
+    draft.events = [];
+    return recalculateProposal(draft);
+  }
   function load() {
     try {
       var raw = localStorage.getItem(LS_KEY);
-      if (raw) return Object.assign({}, DEFAULT, JSON.parse(raw));
+      if (raw) {
+        var saved = JSON.parse(raw);
+        var draft = Object.assign({}, DEFAULT, saved && typeof saved === 'object' ? saved : {});
+        if (!Array.isArray(draft.events)) draft.events = [];
+        return recalculateProposal(window.CesarProposalState.ensureDraft(draft, { isNewDraft: false }));
+      }
     } catch (e) {}
-    return JSON.parse(JSON.stringify(DEFAULT));
+    return freshDraft();
   }
   var saveTimer;
   function save() {
@@ -105,6 +120,7 @@
       if (val != null) el.value = val;
       el.addEventListener('input', function () {
         setPath(state, path, el.value);
+        if (path.indexOf('proposal.') === 0) recalculateProposal();
         save(); render();
       });
     });
@@ -154,7 +170,7 @@
   function togglePromotion(item) {
     var index = state.promotions.findIndex(function (selected) { return selected.id === item.id; });
     if (index === -1) {
-      state.promotions.push({ id: item.id, title: item.title, description: item.description, image: item.image });
+      state.promotions.push({ id: item.id, title: item.title, description: item.description, image: item.image, priority: item.priority });
     } else {
       state.promotions.splice(index, 1);
     }
@@ -163,7 +179,13 @@
 
   function renderPromotions() {
     promotionsEl.innerHTML = '';
-    (window.CESAR_PROMOTIONS || []).forEach(function (item) {
+    (window.CESAR_PROMOTIONS || []).map(function (item, index) {
+      return { item: item, index: index };
+    }).sort(function (a, b) {
+      return b.item.priority - a.item.priority || a.index - b.index;
+    }).map(function (entry) {
+      return entry.item;
+    }).forEach(function (item) {
       var selected = selectedPromotion(item.id);
       var card = document.createElement('div');
       card.className = 'promo-option' + (selected ? ' selected' : '');
@@ -321,7 +343,7 @@
   /* ---------- прочее ---------- */
   document.getElementById('btnReset').addEventListener('click', function () {
     if (!confirm('Очистить все поля отчёта?')) return;
-    state = JSON.parse(JSON.stringify(DEFAULT)); state.events = [];
+    state = freshDraft();
     save(); rebindAll();
   });
 
