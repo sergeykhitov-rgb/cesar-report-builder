@@ -174,6 +174,34 @@ test('generate posts only the client-safe report projection', async () => {
   assert.match(json, /ООО Тест/);
 });
 
+test('generate recalculates and revalidates the proposal immediately before POST', async () => {
+  const harness = createEditorHarness({
+    promotions: [], events: [],
+    proposal: {
+      client: { name: 'ООО Тест' },
+      items: [{ system: 'ritm', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000 }],
+    },
+  });
+  let recalculations = 0;
+  harness.context.CesarProposalState.calculateProposal = proposal => {
+    recalculations += 1;
+    proposal.computed = {
+      equipment: { items: proposal.items.map(item => ({ ...item, lineTotal: 4321 })), subtotal: 4321, discountAmount: 0, afterDiscount: 4321 },
+      installation: { final: 500 }, oneTime: { final: 4821 }, monthlyFee: { final: 2500 }, materialLiability: { final: 100000 },
+      tariff: { resolvedName: 'Актуальный тариф' }, warnings: [],
+    };
+    return proposal;
+  };
+
+  harness.elements.get('btnGenerate').click('click');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(recalculations, 1);
+  assert.equal(harness.fetchCalls(), 1);
+  assert.equal(harness.fetchBodies[0].proposal.computed.oneTime.final, 4821);
+  assert.equal(harness.fetchBodies[0].proposal.items[0].lineTotal, 4321);
+});
+
 test('generate blocks an invalid proposal before POST and focuses its first invalid control', () => {
   const harness = createEditorHarness({ promotions: [], events: [], proposal: { client: { name: '' }, items: [] } });
   harness.elements.get('btnGenerate').click('click');

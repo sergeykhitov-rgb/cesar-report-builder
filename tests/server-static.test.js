@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const net = require('node:net');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { spawn } = require('node:child_process');
@@ -85,12 +87,13 @@ async function workbookStrings(buffer) {
 
 async function startServer(t) {
   const port = await freePort();
+  const reportsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cesar-server-reports-'));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port) },
+    env: { ...process.env, PORT: String(port), REPORTS_DIR: reportsDir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  t.after(() => child.kill());
+  t.after(() => { child.kill(); fs.rmSync(reportsDir, { recursive: true, force: true }); });
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('server start timeout')), 3000);
     child.once('error', reject);
@@ -169,7 +172,7 @@ test('POST reports stores only the server-side public report allowlist', async t
       client: { name: 'ООО Клиент', phone: '+7 999 000-00-00', email: 'mail@example.test', internalId: 42 },
       scenario: { segment: 'B2B', region: 'Москва', objectType: 'Офис', tariff: 'Бизнес', rent: false, source: 'catalog' },
       items: [{
-        system: 'security', systemLabel: 'Охрана', code: 'A-1', name: 'Датчик', model: 'X', unit: 'шт.',
+        system: 'ritm', systemLabel: 'Охрана', code: 'A-1', name: 'Датчик', model: 'X', unit: 'шт.',
         quantity: 2, installedUnitPrice: 1500, lineTotal: 3000,
         sourceInstalledUnitPrice: 1200, priceOverridden: true, overrideReason: 'secret', sourceRows: [7], unknownItem: 'secret',
       }],
@@ -189,7 +192,6 @@ test('POST reports stores only the server-side public report allowlist', async t
   const created = await postJSON(port, '/api/reports', malicious);
   assert.equal(created.status, 200);
   const id = JSON.parse(created.body.toString('utf8')).id;
-  t.after(() => require('node:fs').rmSync(path.join(ROOT, 'data', 'reports', id + '.json'), { force: true }));
 
   const fetched = await request(port, '/api/reports/' + id);
   assert.equal(fetched.status, 200);
@@ -202,7 +204,7 @@ test('POST reports stores only the server-side public report allowlist', async t
   assert.equal(report.manager.photo, photo);
   assert.equal(report.promotions[0].image, photo);
   assert.deepEqual(report.proposal.items[0], {
-    system: 'security', systemLabel: 'Охрана', code: 'A-1', name: 'Датчик', model: 'X', unit: 'шт.',
+    system: 'ritm', systemLabel: 'Охрана', code: 'A-1', name: 'Датчик', model: 'X', unit: 'шт.',
     quantity: 2, installedUnitPrice: 1500, lineTotal: 3000,
   });
   assert.equal(report.proposal.computed.installation.final, 5000);
@@ -219,12 +221,9 @@ test('POST reports stores only the server-side public report allowlist', async t
 
   malicious.proposal.discountPercent = -1;
   const invalidCreated = await postJSON(port, '/api/reports', malicious);
-  assert.equal(invalidCreated.status, 200);
-  const invalidId = JSON.parse(invalidCreated.body.toString('utf8')).id;
-  t.after(() => require('node:fs').rmSync(path.join(ROOT, 'data', 'reports', invalidId + '.json'), { force: true }));
-  const invalidFetched = await request(port, '/api/reports/' + invalidId);
-  const invalidReport = JSON.parse(invalidFetched.body.toString('utf8'));
-  assert.equal(Object.hasOwn(invalidReport.proposal, 'discountPercent'), false);
+  assert.equal(invalidCreated.status, 422);
+  const invalidBody = JSON.parse(invalidCreated.body.toString('utf8'));
+  assert.ok(invalidBody.errors.some(error => error.path === 'proposal.discountPercent'));
 });
 
 test('POST reports rejects an invalid public proposal with structured 422 errors but allows legacy reports', async t => {
@@ -248,7 +247,6 @@ test('POST reports rejects an invalid public proposal with structured 422 errors
   const legacy = await postJSON(port, '/api/reports', { title: 'Legacy', events: [] });
   assert.equal(legacy.status, 200);
   const id = JSON.parse(legacy.body.toString('utf8')).id;
-  t.after(() => require('node:fs').rmSync(path.join(ROOT, 'data', 'reports', id + '.json'), { force: true }));
 });
 
 test('POST xlsx returns one workbook with RFC5987 filename for one system', async t => {

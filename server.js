@@ -15,7 +15,7 @@ const { attachArchiveAbort } = require('./lib/archive-lifecycle');
 const PORT = process.env.PORT || 4600;
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
-const DATA = path.join(ROOT, 'data', 'reports');
+const DATA = process.env.REPORTS_DIR ? path.resolve(process.env.REPORTS_DIR) : path.join(ROOT, 'data', 'reports');
 const SEED = path.join(ROOT, 'seed'); // встроенные постоянные отчёты (в образе, переживают перезапуск)
 const MAX_BODY = 30 * 1024 * 1024; // 30 МБ (фото в base64)
 const MAX_PDF_BODY = 1024 * 1024;
@@ -260,6 +260,94 @@ function proposalValidationErrors(data) {
   return errors;
 }
 
+const KNOWN_PROPOSAL_SYSTEMS = new Set(['ritm', 'hikvision', 'si-nord', 'rental-used']);
+const MAX_PROPOSAL_ITEMS = 200;
+const MAX_PROPOSAL_MONEY = 1e12;
+
+function proposalInputValidationErrors(data) {
+  if (!data || !Object.prototype.hasOwnProperty.call(data, 'proposal')) return [];
+  var errors = [];
+  var proposal = data.proposal;
+  function error(code, path, message) { errors.push({ code: code, path: path, message: message }); }
+  function record(value, path) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      error('INVALID_TYPE', path, 'Ожидается объект.');
+      return {};
+    }
+    return value;
+  }
+  function string(value, path, options) {
+    var settings = options || {};
+    if (value === undefined && !settings.required) return;
+    if (typeof value !== 'string') { error('INVALID_TYPE', path, 'Ожидается строка.'); return; }
+    if (settings.required && !value.trim()) error('REQUIRED', path, 'Поле обязательно.');
+    if (value.length > (settings.max || 500)) error('TOO_LONG', path, 'Значение слишком длинное.');
+  }
+  function money(value, path) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > MAX_PROPOSAL_MONEY) {
+      error('INVALID_NUMBER', path, 'Сумма должна быть числом от 0 до ' + MAX_PROPOSAL_MONEY + '.');
+    }
+  }
+
+  proposal = record(proposal, 'proposal');
+  var client = record(proposal.client, 'proposal.client');
+  string(client.name, 'proposal.client.name', { required: true, max: 200 });
+  string(client.phone, 'proposal.client.phone', { max: 100 });
+  string(client.email, 'proposal.client.email', { max: 200 });
+
+  var scenario = record(proposal.scenario, 'proposal.scenario');
+  string(scenario.segment, 'proposal.scenario.segment', { required: true, max: 10 });
+  if (typeof scenario.segment === 'string' && scenario.segment !== 'B2C' && scenario.segment !== 'B2B') error('INVALID_VALUE', 'proposal.scenario.segment', 'Выберите сегмент B2C или B2B.');
+  string(scenario.region, 'proposal.scenario.region', { required: true, max: 200 });
+  string(scenario.objectType, 'proposal.scenario.objectType', { required: true, max: 200 });
+  string(scenario.tariff, 'proposal.scenario.tariff', { max: 200 });
+  if (scenario.rent !== undefined && typeof scenario.rent !== 'boolean') error('INVALID_TYPE', 'proposal.scenario.rent', 'Ожидается логическое значение.');
+
+  if (!Array.isArray(proposal.items)) {
+    error('INVALID_TYPE', 'proposal.items', 'Ожидается массив оборудования.');
+  } else {
+    if (proposal.items.length < 1) error('REQUIRED', 'proposal.items', 'Добавьте оборудование.');
+    if (proposal.items.length > MAX_PROPOSAL_ITEMS) error('TOO_MANY_ITEMS', 'proposal.items', 'Допускается не более 200 позиций оборудования.');
+    proposal.items.slice(0, MAX_PROPOSAL_ITEMS).forEach(function (rawItem, index) {
+      var base = 'proposal.items.' + index;
+      var item = record(rawItem, base);
+      string(item.system, base + '.system', { required: true, max: 50 });
+      if (typeof item.system === 'string' && !KNOWN_PROPOSAL_SYSTEMS.has(item.system)) error('UNKNOWN_SYSTEM', base + '.system', 'Неизвестная система оборудования.');
+      string(item.systemLabel, base + '.systemLabel', { max: 200 });
+      string(item.code, base + '.code', { required: true, max: 200 });
+      string(item.name, base + '.name', { required: true, max: 500 });
+      string(item.model, base + '.model', { max: 500 });
+      string(item.unit, base + '.unit', { max: 50 });
+      if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 1000000) error('INVALID_ITEM', base + '.quantity', 'Количество должно быть целым числом от 1 до 1000000.');
+      money(item.installedUnitPrice, base + '.installedUnitPrice');
+      money(item.lineTotal, base + '.lineTotal');
+    });
+  }
+
+  if (!Array.isArray(proposal.selectedOptionNames)) {
+    error('INVALID_TYPE', 'proposal.selectedOptionNames', 'Ожидается массив опций.');
+  } else {
+    if (proposal.selectedOptionNames.length > 100) error('TOO_MANY_ITEMS', 'proposal.selectedOptionNames', 'Допускается не более 100 опций.');
+    proposal.selectedOptionNames.slice(0, 100).forEach(function (value, index) { string(value, 'proposal.selectedOptionNames.' + index, { required: true, max: 500 }); });
+  }
+  if (typeof proposal.discountPercent !== 'number' || !Number.isFinite(proposal.discountPercent) || proposal.discountPercent < 0 || proposal.discountPercent > 100) {
+    error('INVALID_NUMBER', 'proposal.discountPercent', 'Скидка должна быть числом от 0 до 100.');
+  }
+
+  var computed = record(proposal.computed, 'proposal.computed');
+  var equipment = record(computed.equipment, 'proposal.computed.equipment');
+  money(equipment.subtotal, 'proposal.computed.equipment.subtotal');
+  money(equipment.discountAmount, 'proposal.computed.equipment.discountAmount');
+  money(equipment.afterDiscount, 'proposal.computed.equipment.afterDiscount');
+  ['installation', 'oneTime', 'monthlyFee', 'materialLiability'].forEach(function (key) {
+    var total = record(computed[key], 'proposal.computed.' + key);
+    money(total.final, 'proposal.computed.' + key + '.final');
+  });
+  var tariff = record(computed.tariff, 'proposal.computed.tariff');
+  string(tariff.resolvedName, 'proposal.computed.tariff.resolvedName', { max: 200 });
+  return errors;
+}
+
 const server = http.createServer(function (req, res) {
   var url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   var pathname = decodeURIComponent(url.pathname);
@@ -366,6 +454,8 @@ const server = http.createServer(function (req, res) {
     readBody(req).then(function (raw) {
       var data;
       try { data = JSON.parse(raw); } catch (e) { return sendJSON(res, 400, { error: 'bad json' }); }
+      var inputErrors = proposalInputValidationErrors(data);
+      if (inputErrors.length) return sendJSON(res, 422, { error: 'invalid proposal', errors: inputErrors });
       data = publicReportPayload(clean(data));
       var validationErrors = proposalValidationErrors(data);
       if (validationErrors.length) return sendJSON(res, 422, { error: 'invalid proposal', errors: validationErrors });

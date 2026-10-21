@@ -763,6 +763,8 @@
 
   btnGen.addEventListener('click', function () {
     if (editorBlocked) { showBlockedWarning(); return; }
+    try { recalculateProposal(state); }
+    catch (error) { blockPublication({ field: 'warnings', message: 'Не удалось пересчитать предложение. Проверьте введённые данные.' }); return; }
     var validationErrors = ProposalUI.publicationErrors(state.proposal);
     if (validationErrors.length) { blockPublication(validationErrors[0]); return; }
     var orig = btnGen.textContent;
