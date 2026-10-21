@@ -180,6 +180,36 @@ function publicReportPayload(input) {
   return output;
 }
 
+function proposalValidationErrors(data) {
+  if (!data || !Object.prototype.hasOwnProperty.call(data, 'proposal')) return [];
+  var proposal = data.proposal || {}, client = proposal.client || {}, scenario = proposal.scenario || {}, computed = proposal.computed || {};
+  var errors = [];
+  function required(value, path, message) {
+    if (typeof value !== 'string' || !value.trim()) errors.push({ code: 'REQUIRED', path: path, message: message });
+  }
+  function finite(value, path, message) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) errors.push({ code: 'INVALID_TOTAL', path: path, message: message });
+  }
+  required(client.name, 'proposal.client.name', 'Укажите организацию или имя клиента.');
+  if (scenario.segment !== 'B2C' && scenario.segment !== 'B2B') errors.push({ code: 'INVALID_VALUE', path: 'proposal.scenario.segment', message: 'Выберите сегмент B2C или B2B.' });
+  required(scenario.region, 'proposal.scenario.region', 'Выберите регион.');
+  required(scenario.objectType, 'proposal.scenario.objectType', 'Укажите тип объекта.');
+  var items = Array.isArray(proposal.items) ? proposal.items : [];
+  if (!items.length) errors.push({ code: 'REQUIRED', path: 'proposal.items', message: 'Добавьте оборудование.' });
+  items.forEach(function (item, index) {
+    if (!item || !Number.isSafeInteger(item.quantity) || item.quantity <= 0) errors.push({ code: 'INVALID_ITEM', path: 'proposal.items.' + index + '.quantity', message: 'Количество должно быть положительным целым числом.' });
+    ['installedUnitPrice', 'lineTotal'].forEach(function (field) {
+      if (!item || typeof item[field] !== 'number' || !Number.isFinite(item[field]) || item[field] < 0) errors.push({ code: 'INVALID_ITEM', path: 'proposal.items.' + index + '.' + field, message: 'Цена и сумма позиции должны быть неотрицательными числами.' });
+    });
+  });
+  finite(computed.equipment && computed.equipment.afterDiscount, 'proposal.computed.equipment.afterDiscount', 'Проверьте итог оборудования.');
+  finite(computed.installation && computed.installation.final, 'proposal.computed.installation.final', 'Проверьте стоимость монтажа.');
+  finite(computed.oneTime && computed.oneTime.final, 'proposal.computed.oneTime.final', 'Проверьте разовый платёж.');
+  finite(computed.monthlyFee && computed.monthlyFee.final, 'proposal.computed.monthlyFee.final', 'Проверьте ежемесячный платёж.');
+  finite(computed.materialLiability && computed.materialLiability.final, 'proposal.computed.materialLiability.final', 'Проверьте материальную ответственность.');
+  return errors;
+}
+
 const server = http.createServer(function (req, res) {
   var url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   var pathname = decodeURIComponent(url.pathname);
@@ -190,6 +220,8 @@ const server = http.createServer(function (req, res) {
       var data;
       try { data = JSON.parse(raw); } catch (e) { return sendJSON(res, 400, { error: 'bad json' }); }
       data = publicReportPayload(clean(data));
+      var validationErrors = proposalValidationErrors(data);
+      if (validationErrors.length) return sendJSON(res, 422, { error: 'invalid proposal', errors: validationErrors });
       data.id = genId();
       data.createdAt = new Date().toISOString();
       fs.writeFile(path.join(DATA, data.id + '.json'), JSON.stringify(data), function (err) {

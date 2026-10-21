@@ -83,11 +83,34 @@ test('scenario options are catalog-derived and preserve only compatible values',
 
 test('warning and override helpers never turn missing money into zero', () => {
   const ui = loadUi();
+  const valid = { client: { name: 'ООО Тест' }, scenario: { segment: 'B2C', region: 'Москва', objectType: 'Квартира' }, items: [{ quantity: 1 }], computed: { equipment: { afterDiscount: 1000 }, installation: { final: 500 }, oneTime: { final: 1500 }, monthlyFee: { final: 1990 }, materialLiability: { final: 1000000 }, warnings: [] } };
   assert.equal(ui.formatMoney(null), '—');
   assert.match(ui.overrideView({ calculated: 1990, final: 1500, overridden: true }).badge, /Изменено вручную/);
   assert.equal(ui.overrideView({ calculated: null, final: null, overridden: false }).final, '—');
-  assert.equal(ui.isProposalValid({ client: { name: 'ООО Тест' }, scenario: { segment: 'B2C', region: 'Москва', objectType: 'Квартира' }, items: [{ quantity: 1 }], computed: { warnings: [] } }), true);
+  assert.equal(ui.isProposalValid(valid), true);
   assert.equal(ui.isProposalValid({ client: { name: '' }, scenario: {}, items: [], computed: { warnings: [] } }), false);
+  assert.equal(ui.isProposalValid({ ...valid, computed: { ...valid.computed, monthlyFee: { final: null } } }), false);
+  assert.equal(ui.isProposalValid({ ...valid, scenario: { ...valid.scenario, segment: 'OTHER' } }), false);
+  assert.equal(ui.publicationErrors({ ...valid, computed: { ...valid.computed, warnings: [{ code: 'MISSING_RATE' }] } })[0].section, 'totals');
+});
+
+test('options are filtered by explicit category and segment switches retain only shared entries', () => {
+  const ui = loadUi();
+  const options = [
+    { name: 'Только B2C', category: 'B2C' },
+    { name: 'Только B2B', category: 'B2B' },
+    { name: 'Общая', category: 'shared' },
+    { name: 'Без категории' },
+  ];
+  assert.deepEqual(ui.optionsForSegment(options, 'B2C').map(item => item.name), ['Только B2C', 'Общая']);
+  assert.deepEqual(ui.optionsForSegment(options, 'B2B').map(item => item.name), ['Только B2B', 'Общая']);
+  assert.deepEqual(ui.optionsAfterSegmentChange(['Только B2C', 'Общая'], options), ['Общая']);
+  assert.deepEqual(ui.reconcileOptions(['Только B2B', 'Общая'], options, 'B2C'), ['Общая']);
+  const stateApi = require('../public/calculator.js');
+  const proposal = stateApi.createDefaultProposal();
+  proposal.selectedOptionNames = ui.reconcileOptions(['Росгвардия'], catalogs.options, 'B2C');
+  stateApi.calculateProposal(proposal, catalogs);
+  assert.equal(proposal.computed.warnings.some(warning => warning.code === 'MISSING_OPTION_RATE'), false);
 });
 
 test('report includes an escaped client proposal only when equipment exists', () => {
@@ -126,6 +149,12 @@ test('responsive and accessible contracts are explicit', () => {
   assert.match(css + theme, /:focus-visible/);
   assert.match(css, /overflow-x:\s*hidden/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.match(html, /id="modal"[^>]*role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="successDialogTitle"/);
+  assert.match(html, /id="successDialogTitle"/);
+  assert.match(html, /id="previewDialogTitle"/);
+  assert.match(fs.readFileSync('public/editor.js', 'utf8'), /inert/);
+  assert.match(fs.readFileSync('public/editor.js', 'utf8'), /Shift|shiftKey/);
+  assert.match(fs.readFileSync('public/editor.js', 'utf8'), /Escape/);
 });
 
 test('export controls start disabled and explain their future availability', () => {

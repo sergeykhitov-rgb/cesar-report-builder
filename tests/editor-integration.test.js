@@ -7,7 +7,8 @@ class FakeElement {
   constructor(attributes = {}) {
     this.attributes = attributes;
     this.listeners = {};
-    this.classList = { add() {}, remove() {} };
+    this.classes = new Set();
+    this.classList = { add: name => this.classes.add(name), remove: name => this.classes.delete(name), contains: name => this.classes.has(name) };
     this.value = '';
     this.innerHTML = '';
     this.hidden = false;
@@ -17,6 +18,7 @@ class FakeElement {
   }
   getAttribute(name) { return this.attributes[name]; }
   setAttribute(name, value) { this.attributes[name] = value; }
+  removeAttribute(name) { delete this.attributes[name]; }
   hasAttribute(name) { return Object.hasOwn(this.attributes, name); }
   addEventListener(type, listener) { this.listeners[type] = listener; }
   appendChild(child) { this.children.push(child); this.lastElementChild = child; return child; }
@@ -24,11 +26,12 @@ class FakeElement {
   querySelector() { return new FakeElement(); }
   querySelectorAll() { return []; }
   scrollIntoView() {}
+  focus() { this.focused = true; }
   select() {}
   click(type, event = {}) { return this.listeners[type](event); }
 }
 
-function createEditorHarness(savedDraft) {
+function createEditorHarness(savedDraft, options = {}) {
   const elements = new Map();
   const managerInput = new FakeElement({ 'data-path': 'manager.name' });
   const cameraInput = new FakeElement({ 'data-path': 'proposal.counts.cameraCount' });
@@ -38,7 +41,10 @@ function createEditorHarness(savedDraft) {
   const renders = [];
   let fetchCalls = 0;
   const fetchBodies = [];
+  const selectorElements = new Map();
+  const documentListeners = {};
   const document = {
+    activeElement: null,
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, new FakeElement());
       return elements.get(id);
@@ -47,8 +53,12 @@ function createEditorHarness(savedDraft) {
       if (selector === '[data-path]') return pathInputs;
       return [];
     },
+    querySelector(selector) { if (!selectorElements.has(selector)) selectorElements.set(selector, new FakeElement()); return selectorElements.get(selector); },
     createElement() { return new FakeElement(); },
     execCommand() { return true; },
+    addEventListener(type, listener) { documentListeners[type] = listener; },
+    removeEventListener(type, listener) { if (documentListeners[type] === listener) delete documentListeners[type]; },
+    dispatch(type, event) { if (documentListeners[type]) documentListeners[type](event); },
   };
   const context = {
     console,
@@ -62,6 +72,7 @@ function createEditorHarness(savedDraft) {
     clearTimeout() {},
     navigator: {},
     location: { origin: 'http://test.local' },
+    matchMedia() { return { matches: !!options.mobile }; },
     fetch(url, options) { fetchCalls += 1; fetchBodies.push(JSON.parse(options.body)); return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'report-1' }) }); },
   };
   context.window = context;
@@ -72,7 +83,7 @@ function createEditorHarness(savedDraft) {
   vm.runInNewContext(fs.readFileSync('public/calculator.js', 'utf8'), context);
   context.renderReport = state => { renders.push(JSON.parse(JSON.stringify(state))); return ''; };
   vm.runInNewContext(fs.readFileSync('public/editor.js', 'utf8'), context);
-  return { elements, managerInput, cameraInput, storage, renders, fetchBodies, fetchCalls: () => fetchCalls };
+  return { elements, selectorElements, document, managerInput, cameraInput, storage, renders, fetchBodies, fetchCalls: () => fetchCalls };
 }
 
 test('editor deep-merges an incomplete legacy draft and reset has independent defaults', () => {
@@ -146,4 +157,41 @@ test('generate posts only the client-safe report projection', async () => {
   assert.equal(harness.fetchCalls(), 1);
   ['sourceInstalledUnitPrice', 'priceOverridden', 'overrides', 'warnings', 'exportMetadata', 'identity'].forEach(key => assert.doesNotMatch(json, new RegExp(`"${key}"`)));
   assert.match(json, /ООО Тест/);
+});
+
+test('generate blocks an invalid proposal before POST and focuses its first invalid control', () => {
+  const harness = createEditorHarness({ promotions: [], events: [], proposal: { client: { name: '' }, items: [] } });
+  harness.elements.get('btnGenerate').click('click');
+  assert.equal(harness.fetchCalls(), 0);
+  const client = harness.elements.get('proposalClientName');
+  assert.equal(client.focused, true);
+  assert.match(harness.elements.get('toast').textContent, /клиент/i);
+});
+
+test('success dialog and mobile preview move focus, close on Escape, and restore their triggers', async () => {
+  const harness = createEditorHarness({
+    promotions: [], events: [],
+    proposal: { client: { name: 'ООО Тест' }, items: [{ system: 'ritm', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000 }] },
+  }, { mobile: true });
+  const generate = harness.elements.get('btnGenerate');
+  generate.click('click');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.elements.get('modal').hidden, false);
+  assert.equal(harness.elements.get('linkInput').focused, true);
+  assert.equal(harness.selectorElements.get('.workspace').inert, true);
+  harness.document.dispatch('keydown', { key: 'Escape', preventDefault() {} });
+  assert.equal(harness.elements.get('modal').hidden, true);
+  assert.equal(generate.focused, true);
+  assert.equal(harness.selectorElements.get('.workspace').inert, false);
+
+  const previewTrigger = harness.elements.get('btnPreviewMobile');
+  previewTrigger.click('click');
+  const preview = harness.elements.get('panePreview');
+  assert.equal(preview.getAttribute('role'), 'dialog');
+  assert.equal(preview.getAttribute('aria-modal'), 'true');
+  assert.equal(harness.elements.get('btnClosePreview').focused, true);
+  harness.document.dispatch('keydown', { key: 'Escape', preventDefault() {} });
+  assert.equal(preview.classList.contains('open'), false);
+  assert.equal(preview.hasAttribute('role'), false);
+  assert.equal(previewTrigger.focused, true);
 });

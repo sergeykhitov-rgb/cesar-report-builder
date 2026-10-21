@@ -39,6 +39,39 @@
     var target = items[index + 1] || items[index - 1];
     return 'qty-input:' + (target.identity || identity(target));
   }
+  function optionsForSegment(options, segment) {
+    return (options || []).filter(function (item) {
+      var category = String(item && item.category || '').toUpperCase();
+      return category === String(segment || '').toUpperCase() || category === 'SHARED';
+    });
+  }
+  function reconcileOptions(names, options, segment) {
+    var available = optionsForSegment(options, segment).map(function (item) { return item.name; });
+    return unique((names || []).filter(function (name) { return available.indexOf(name) !== -1; }));
+  }
+  function optionsAfterSegmentChange(names, options) {
+    var shared = (options || []).filter(function (item) { return String(item && item.category || '').toUpperCase() === 'SHARED'; }).map(function (item) { return item.name; });
+    return unique((names || []).filter(function (name) { return shared.indexOf(name) !== -1; }));
+  }
+  function publicationErrors(proposal) {
+    var p = proposal || {}, client = p.client || {}, scenario = p.scenario || {}, computed = p.computed || {};
+    var errors = [];
+    function required(value, field, section, message) { if (!String(value == null ? '' : value).trim()) errors.push({ field: field, section: section, message: message }); }
+    function finite(value, field, message) { if (typeof value !== 'number' || !Number.isFinite(value)) errors.push({ field: field, section: 'totals', message: message }); }
+    required(client.name, 'clientName', 'client', 'Укажите организацию или имя клиента.');
+    if (scenario.segment !== 'B2C' && scenario.segment !== 'B2B') errors.push({ field: 'segment', section: 'scenario', message: 'Выберите сегмент B2C или B2B.' });
+    required(scenario.region, 'region', 'scenario', 'Выберите регион.');
+    required(scenario.objectType, 'objectType', 'scenario', 'Укажите тип объекта.');
+    if (!(p.items || []).some(function (item) { return Number.isSafeInteger(Number(item.quantity)) && Number(item.quantity) > 0; })) errors.push({ field: 'items', section: 'equipment', message: 'Добавьте хотя бы одну позицию оборудования.' });
+    var blocking = (computed.warnings || []).find(function (warning) { return warning && /^(MISSING_|INVALID_)/.test(String(warning.code || '')); });
+    if (blocking) errors.push({ field: 'warnings', section: 'totals', message: blocking.message || 'Устраните ошибки расчёта.' });
+    finite(computed.equipment && computed.equipment.afterDiscount, 'equipmentTotal', 'Проверьте итоговую стоимость оборудования.');
+    finite(computed.installation && computed.installation.final, 'installation', 'Проверьте стоимость монтажа.');
+    finite(computed.oneTime && computed.oneTime.final, 'oneTime', 'Проверьте разовый платёж.');
+    finite(computed.monthlyFee && computed.monthlyFee.final, 'monthlyFee', 'Проверьте ежемесячный платёж.');
+    finite(computed.materialLiability && computed.materialLiability.final, 'materialLiability', 'Проверьте материальную ответственность.');
+    return errors;
+  }
   var money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
   var ProposalUI = {
     filterEquipment: function (items, filters) {
@@ -84,7 +117,11 @@
     compatibleValue: function (current, values) { return values.indexOf(current) === -1 ? '' : current; },
     formatMoney: function (value) { return typeof value === 'number' && Number.isFinite(value) ? money.format(value) : '—'; },
     overrideView: function (value) { return { calculated: ProposalUI.formatMoney(value && value.calculated), final: ProposalUI.formatMoney(value && value.final), badge: value && value.overridden ? 'Изменено вручную' : '' }; },
-    isProposalValid: function (proposal) { return !!(proposal && proposal.client && proposal.client.name && proposal.scenario && proposal.scenario.segment && proposal.scenario.region && (proposal.scenario.segment === 'B2B' || proposal.scenario.objectType) && proposal.items && proposal.items.some(function (item) { return item.quantity > 0; }) && proposal.computed && !(proposal.computed.warnings || []).some(function (warning) { return /^MISSING_|^INVALID_/.test(warning.code); })); },
+    isProposalValid: function (proposal) { return publicationErrors(proposal).length === 0; },
+    publicationErrors: publicationErrors,
+    optionsForSegment: optionsForSegment,
+    reconcileOptions: reconcileOptions,
+    optionsAfterSegmentChange: optionsAfterSegmentChange,
     publicReportProjection: publicReportProjection,
     nextFocusAfterDelete: nextFocusAfterDelete
   };
@@ -253,6 +290,7 @@
     if (editorBlocked) { showBlockedWarning(); return; }
     if (!pendingEquipmentFocus) pendingEquipmentFocus = captureEquipmentFocus();
     renderScenarioControls();
+    state.proposal.selectedOptionNames = ProposalUI.reconcileOptions(state.proposal.selectedOptionNames, root.CESAR_CALCULATOR_CATALOGS.calculator.options, state.proposal.scenario.segment);
     recalculateProposal(); save(); render(); renderCalculator();
   }
   function captureEquipmentFocus() {
@@ -281,8 +319,8 @@
     document.getElementById('proposalRent').checked = scenario.rent;
     var available = ProposalUI.scenarioOptions(root.CESAR_CALCULATOR_CATALOGS.calculator, scenario);
     scenario.region = replaceOptions(document.getElementById('proposalRegion'), available.regions, scenario.region);
-    var objects = available.objectTypes;
-    scenario.objectType = replaceOptions(document.getElementById('proposalObjectType'), objects, scenario.objectType, scenario.segment === 'B2B' ? 'Не применяется' : 'Выберите объект');
+    var objects = scenario.segment === 'B2B' ? ['Не применяется'] : available.objectTypes;
+    scenario.objectType = replaceOptions(document.getElementById('proposalObjectType'), objects, scenario.objectType, scenario.segment === 'B2B' ? null : 'Выберите объект');
     document.getElementById('proposalObjectType').disabled = scenario.segment === 'B2B';
     var regionalCatalog = scenario.segment === 'B2B' ? root.CESAR_CALCULATOR_CATALOGS.calculator.b2bTariffs : (scenario.rent ? root.CESAR_CALCULATOR_CATALOGS.calculator.b2cRentalTariffs : root.CESAR_CALCULATOR_CATALOGS.calculator.b2cTariffs);
     var tariffs = regionalCatalog.filter(function (row) { return row.region === scenario.region && (scenario.segment === 'B2B' || row.objectType === scenario.objectType); }).map(function (row) { return row.name; });
@@ -348,6 +386,21 @@
     (computed.warnings || []).forEach(function (warning) { var note = document.createElement('p'); note.className = 'warning-item'; note.textContent = warning.message + ' Проверьте параметры расчёта.'; warnings.appendChild(note); });
     ['btnExportPdf', 'btnExportXlsx'].forEach(function (id) { var button = document.getElementById(id); button.disabled = true; button.setAttribute('aria-disabled', 'true'); button.title = 'Выгрузка PDF и Excel будет подключена на следующем этапе.'; });
   }
+  function renderOptionControls() {
+    var host = document.getElementById('proposalOptions'), catalog = root.CESAR_CALCULATOR_CATALOGS.calculator;
+    host.innerHTML = '';
+    ProposalUI.optionsForSegment(catalog.options, state.proposal.scenario.segment).forEach(function (item, index) {
+      var label = document.createElement('label'); label.className = 'option-check';
+      var input = document.createElement('input'); input.type = 'checkbox'; input.value = item.name; input.id = 'proposalOption' + index;
+      input.checked = state.proposal.selectedOptionNames.indexOf(item.name) !== -1;
+      var text = document.createElement('span'); text.textContent = item.name + ' · ' + ProposalUI.formatMoney(item.monthlyPrice) + '/мес.';
+      label.appendChild(input); label.appendChild(text); host.appendChild(label);
+      input.addEventListener('change', function () {
+        state.proposal.selectedOptionNames = Array.from(document.querySelectorAll('#proposalOptions input:checked')).map(function (node) { return node.value; });
+        commitProposal();
+      });
+    });
+  }
   function renderCalculator() {
     renderScenarioControls();
     var p = state.proposal;
@@ -355,7 +408,7 @@
     document.getElementById('proposalHouseholdSensors').value = p.counts.additionalHouseholdSensors;
     document.getElementById('proposalSecuritySensors').value = p.counts.additionalSecuritySensors;
     document.getElementById('proposalDiscount').value = p.discountPercent;
-    document.querySelectorAll('#proposalOptions input').forEach(function (input) { input.checked = p.selectedOptionNames.indexOf(input.value) !== -1; });
+    renderOptionControls();
     [['overrideInstallation','installationOverride'],['overrideMonthlyFee','monthlyFeeOverride'],['overrideMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { var value = p.overrides[binding[1]]; document.getElementById(binding[0]).value = value == null ? '' : value; });
     renderSelectedEquipment(); renderTotals(); restoreEquipmentFocus();
   }
@@ -363,8 +416,7 @@
     var catalog = root.CESAR_CALCULATOR_CATALOGS.calculator, equipmentCatalog = root.CESAR_CALCULATOR_CATALOGS.equipment.items;
     var systemSelect = document.getElementById('equipmentSystemFilter'); unique(equipmentCatalog.map(function (item) { return item.system; })).forEach(function (system) { var first = equipmentCatalog.find(function (item) { return item.system === system; }); option(systemSelect, system, first.systemLabel); });
     catalog.discounts.filter(function (discount) { return Number.isFinite(discount.percent); }).forEach(function (discount) { option(document.getElementById('proposalDiscount'), discount.percent, discount.percent + ' %'); });
-    catalog.options.forEach(function (item, index) { var label = document.createElement('label'); label.className = 'option-check'; var input = document.createElement('input'); input.type = 'checkbox'; input.value = item.name; input.id = 'proposalOption' + index; var text = document.createElement('span'); text.textContent = item.name + ' · ' + ProposalUI.formatMoney(item.monthlyPrice) + '/мес.'; label.appendChild(input); label.appendChild(text); document.getElementById('proposalOptions').appendChild(label); input.addEventListener('change', function () { state.proposal.selectedOptionNames = Array.from(document.querySelectorAll('#proposalOptions input:checked')).map(function (node) { return node.value; }); commitProposal(); }); });
-    document.querySelectorAll('[name="proposalSegment"]').forEach(function (radio) { radio.addEventListener('change', function () { if (radio.checked) { state.proposal.scenario.segment = radio.value; commitProposal(); } }); });
+    document.querySelectorAll('[name="proposalSegment"]').forEach(function (radio) { radio.addEventListener('change', function () { if (radio.checked) { state.proposal.selectedOptionNames = ProposalUI.optionsAfterSegmentChange(state.proposal.selectedOptionNames, catalog.options); state.proposal.scenario.segment = radio.value; commitProposal(); } }); });
     document.getElementById('proposalRent').addEventListener('change', function (event) { state.proposal.scenario.rent = event.target.checked; commitProposal(); });
     [['proposalRegion','region'],['proposalObjectType','objectType'],['proposalTariff','tariff']].forEach(function (binding) { document.getElementById(binding[0]).addEventListener('change', function (event) { state.proposal.scenario[binding[1]] = event.target.value; commitProposal(); }); });
     [['proposalCameraCount','cameraCount'],['proposalHouseholdSensors','additionalHouseholdSensors'],['proposalSecuritySensors','additionalSecuritySensors']].forEach(function (binding) { document.getElementById(binding[0]).addEventListener('change', function (event) { state.proposal.counts[binding[1]] = event.target.value; commitProposal(); }); });
@@ -372,6 +424,8 @@
     document.getElementById('equipmentSearch').addEventListener('input', renderSearchResults); systemSelect.addEventListener('change', renderSearchResults);
     [['overrideInstallation','installationOverride'],['overrideMonthlyFee','monthlyFeeOverride'],['overrideMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { var input = document.getElementById(binding[0]); input.addEventListener('change', function () { state.proposal.overrides[binding[1]] = input.value; commitProposal(); }); });
     [['resetInstallation','installationOverride'],['resetMonthlyFee','monthlyFeeOverride'],['resetMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { document.getElementById(binding[0]).addEventListener('click', function () { root.CesarProposalState.resetOverride(state.proposal, binding[1], root.CESAR_CALCULATOR_CATALOGS); document.getElementById('override' + binding[0].slice(5)).value = ''; save(); render(); renderCalculator(); }); });
+    state.proposal.selectedOptionNames = ProposalUI.reconcileOptions(state.proposal.selectedOptionNames, catalog.options, state.proposal.scenario.segment);
+    recalculateProposal();
     renderCalculator();
   }
 
@@ -558,8 +612,69 @@
   var linkOpen = document.getElementById('linkOpen');
   var btnGen = document.getElementById('btnGenerate');
 
+  function createDialogController(dialog, settings) {
+    var trigger = null, open = false, backgrounds = settings.backgrounds || [];
+    var focusSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    function focusable() { return Array.from(dialog.querySelectorAll(focusSelector)).filter(function (node) { return !node.hidden; }); }
+    function onKeydown(event) {
+      if (!open) return;
+      if (event.key === 'Escape') { event.preventDefault(); close(); return; }
+      if (event.key !== 'Tab') return;
+      var nodes = focusable();
+      if (!nodes.length) { event.preventDefault(); dialog.focus(); return; }
+      var first = nodes[0], last = nodes[nodes.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    function show(openTrigger) {
+      if (open) return;
+      open = true; trigger = openTrigger || document.activeElement;
+      if (settings.hidden) dialog.hidden = false;
+      if (settings.openClass) dialog.classList.add(settings.openClass);
+      if (settings.dynamicModal) {
+        dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); dialog.setAttribute('aria-labelledby', settings.labelledBy);
+      }
+      backgrounds.forEach(function (node) { if (!node) return; node.inert = true; node.setAttribute('aria-hidden', 'true'); });
+      if (document.addEventListener) document.addEventListener('keydown', onKeydown);
+      var target = settings.initialFocus && settings.initialFocus();
+      if (!target) target = focusable()[0] || dialog;
+      if (target && target.focus) target.focus();
+    }
+    function close() {
+      if (!open) return;
+      open = false;
+      if (settings.hidden) dialog.hidden = true;
+      if (settings.openClass) dialog.classList.remove(settings.openClass);
+      if (settings.dynamicModal) {
+        ['role', 'aria-modal', 'aria-labelledby'].forEach(function (name) { if (dialog.removeAttribute) dialog.removeAttribute(name); });
+      }
+      backgrounds.forEach(function (node) { if (!node) return; node.inert = false; if (node.removeAttribute) node.removeAttribute('aria-hidden'); });
+      if (document.removeEventListener) document.removeEventListener('keydown', onKeydown);
+      if (trigger && trigger.focus) trigger.focus();
+      trigger = null;
+    }
+    return { open: show, close: close, isOpen: function () { return open; } };
+  }
+
+  var successDialog = createDialogController(modal, {
+    hidden: true,
+    backgrounds: [document.querySelector('.topbar'), document.querySelector('.workspace')],
+    initialFocus: function () { return linkInput; }
+  });
+  function blockPublication(error) {
+    var message = error && error.message || 'Проверьте обязательные поля коммерческого предложения.';
+    toast(message);
+    var warnings = document.getElementById('proposalWarnings');
+    if (warnings) { var note = document.createElement('p'); note.className = 'warning-item publication-warning'; note.textContent = message; warnings.appendChild(note); }
+    var targets = { clientName: 'proposalClientName', segment: 'proposalSegment', region: 'proposalRegion', objectType: 'proposalObjectType', items: 'equipmentSearch', warnings: 'proposalWarnings', equipmentTotal: 'proposalTotals', installation: 'overrideInstallation', oneTime: 'proposalTotals', monthlyFee: 'overrideMonthlyFee', materialLiability: 'overrideMaterialLiability' };
+    var target = document.getElementById(targets[error && error.field] || 'proposalClientName');
+    if (target) { if (!target.hasAttribute || !target.hasAttribute('tabindex')) { if (target.id === 'proposalWarnings' || target.id === 'proposalTotals') target.setAttribute('tabindex', '-1'); } if (target.focus) target.focus(); if (target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }
+
   btnGen.addEventListener('click', function () {
     if (editorBlocked) { showBlockedWarning(); return; }
+    var validationErrors = ProposalUI.publicationErrors(state.proposal);
+    if (validationErrors.length) { blockPublication(validationErrors[0]); return; }
     var orig = btnGen.textContent;
     btnGen.disabled = true; btnGen.textContent = 'Публикуем…';
     fetch('/api/reports', {
@@ -571,7 +686,7 @@
     }).then(function (res) {
       var url = location.origin + '/r/' + res.id;
       linkInput.value = url; linkOpen.href = url;
-      modal.hidden = false;
+      successDialog.open(btnGen);
     }).catch(function () {
       toast('Ошибка публикации. Проверьте, что сервер запущен.');
     }).finally(function () {
@@ -581,8 +696,8 @@
 
   document.getElementById('btnCopy').addEventListener('click', function () { copy(linkInput.value); });
   linkInput.addEventListener('click', function () { linkInput.select(); });
-  document.getElementById('btnCloseModal').addEventListener('click', function () { modal.hidden = true; });
-  modal.addEventListener('click', function (e) { if (e.target === modal) modal.hidden = true; });
+  document.getElementById('btnCloseModal').addEventListener('click', function () { successDialog.close(); });
+  modal.addEventListener('click', function (e) { if (e.target === modal) successDialog.close(); });
 
   function copy(text) {
     if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { toast('Ссылка скопирована'); }, fallbackCopy);
@@ -599,8 +714,14 @@
   });
 
   var panePreview = document.getElementById('panePreview');
-  document.getElementById('btnPreviewMobile').addEventListener('click', function () { panePreview.classList.add('open'); render(); });
-  document.getElementById('btnClosePreview').addEventListener('click', function () { panePreview.classList.remove('open'); });
+  var previewButton = document.getElementById('btnPreviewMobile');
+  var previewDialog = createDialogController(panePreview, {
+    openClass: 'open', dynamicModal: true, labelledBy: 'previewDialogTitle',
+    backgrounds: [document.querySelector('.topbar'), document.getElementById('paneForm')],
+    initialFocus: function () { return document.getElementById('btnClosePreview'); }
+  });
+  previewButton.addEventListener('click', function () { if (root.matchMedia && root.matchMedia('(max-width: 760px)').matches) { previewDialog.open(previewButton); render(); } });
+  document.getElementById('btnClosePreview').addEventListener('click', function () { previewDialog.close(); });
 
   var toastEl = document.getElementById('toast'), toastTimer;
   function showBlockedWarning() {

@@ -172,7 +172,7 @@
     <!-- ПРАВО: живой предпросмотр -->
     <section class="pane pane-preview" id="panePreview">
       <div class="preview-bar">
-        <span class="preview-bar-title">Предпросмотр</span>
+        <span class="preview-bar-title" id="previewDialogTitle">Предпросмотр</span>
         <button id="btnClosePreview" class="btn btn-ghost btn-sm mobile-only">Закрыть</button>
       </div>
       <div class="preview-scroll"><div id="preview"></div></div>
@@ -180,10 +180,10 @@
   </main>
 
   <!-- модалка с готовой ссылкой -->
-  <div class="modal" id="modal" hidden>
+  <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="successDialogTitle" hidden>
     <div class="modal-card">
       <div class="modal-mark"><img src="/logo-mark.png" alt=""></div>
-      <h2>Отчёт готов</h2>
+      <h2 id="successDialogTitle">Отчёт готов</h2>
       <p class="modal-sub">Ссылка общедоступна — откроется на компьютере и телефоне.</p>
       <div class="linkrow">
         <input id="linkInput" readonly>

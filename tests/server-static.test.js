@@ -188,3 +188,27 @@ test('POST reports stores only the server-side public report allowlist', async t
   const invalidReport = JSON.parse(invalidFetched.body.toString('utf8'));
   assert.equal(Object.hasOwn(invalidReport.proposal, 'discountPercent'), false);
 });
+
+test('POST reports rejects an invalid public proposal with structured 422 errors but allows legacy reports', async t => {
+  const port = await startServer(t);
+  const invalid = await postJSON(port, '/api/reports', {
+    title: 'Invalid proposal',
+    proposal: {
+      client: { name: '' }, scenario: { segment: 'OTHER', region: '', objectType: '' },
+      items: [{ code: '1', name: 'Датчик', quantity: 0, installedUnitPrice: 1000, lineTotal: 0 }],
+      computed: { equipment: { afterDiscount: null }, installation: { final: null }, oneTime: { final: null }, monthlyFee: { final: null }, materialLiability: { final: null } },
+    },
+  });
+  assert.equal(invalid.status, 422);
+  const invalidBody = JSON.parse(invalid.body.toString('utf8'));
+  assert.equal(invalidBody.error, 'invalid proposal');
+  assert.ok(Array.isArray(invalidBody.errors));
+  assert.ok(invalidBody.errors.some(error => error.path === 'proposal.client.name'));
+  assert.ok(invalidBody.errors.some(error => error.path === 'proposal.scenario.segment'));
+  assert.ok(invalidBody.errors.some(error => error.path === 'proposal.computed.monthlyFee.final'));
+
+  const legacy = await postJSON(port, '/api/reports', { title: 'Legacy', events: [] });
+  assert.equal(legacy.status, 200);
+  const id = JSON.parse(legacy.body.toString('utf8')).id;
+  t.after(() => require('node:fs').rmSync(path.join(ROOT, 'data', 'reports', id + '.json'), { force: true }));
+});
