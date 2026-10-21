@@ -118,6 +118,78 @@ test('malformed item entries are discarded before calculation', () => {
   assert.doesNotThrow(() => state.calculateProposal(proposal, catalogs()));
 });
 
+test('nested proposal fields are sanitized by explicit type rules', () => {
+  const state = loadState();
+  const normalized = state.normalizeProposal({
+    client: { name: null, phone: 123, email: 'client@example.test', ignored: 'drop' },
+    scenario: {
+      segment: 'consumer',
+      region: null,
+      objectType: ['Квартира'],
+      tariff: 'Выгодный',
+      rent: 'yes',
+      baseMonthlyFee: '5000',
+      installationCalculated: Infinity,
+      ignored: true,
+    },
+    items: [
+      {
+        code: 'A', quantity: 2, installedUnitPrice: 100.5, active: true, note: null,
+        invalidNumber: Infinity, nested: { unsafe: true }, list: ['unsafe'], missing: undefined,
+      },
+      new Date(),
+    ],
+    selectedOptionNames: ['Кнопка', null, 'Кнопка', 'Камера', 7, 'Камера'],
+    discountPercent: '5',
+    counts: {
+      cameraCount: 'bad',
+      additionalHouseholdSensors: 2,
+      additionalSecuritySensors: NaN,
+      baseSecuritySensorCount: 1.5,
+    },
+    overrides: {
+      monthlyFeeOverride: {},
+      installationOverride: false,
+      materialLiabilityOverride: '0',
+    },
+    exportMetadata: { generatedAt: 123, generatedBy: 'manager', ignored: {} },
+  });
+
+  assert.deepEqual(normalized.client, { name: '', phone: '', email: 'client@example.test' });
+  assert.deepEqual(normalized.scenario, {
+    segment: 'B2C', region: 'Москва/МО, ЦФО', objectType: 'Квартира', tariff: 'Выгодный', rent: false,
+    baseMonthlyFee: null, installationCalculated: null,
+  });
+  assert.deepEqual(normalized.items, [{ code: 'A', quantity: 2, installedUnitPrice: 100.5, active: true, note: null }]);
+  assert.deepEqual(normalized.selectedOptionNames, ['Кнопка', 'Камера']);
+  assert.equal(normalized.discountPercent, 0);
+  assert.deepEqual(normalized.counts, {
+    cameraCount: 0, additionalHouseholdSensors: 2, additionalSecuritySensors: 0, baseSecuritySensorCount: 1.5,
+  });
+  assert.deepEqual(normalized.overrides, {
+    monthlyFeeOverride: null, installationOverride: null, materialLiabilityOverride: '0',
+  });
+  assert.deepEqual(normalized.exportMetadata, { generatedAt: null, generatedBy: 'manager' });
+});
+
+test('valid B2B scenario and override zero forms survive normalization', () => {
+  const state = loadState();
+  const normalized = state.normalizeProposal({
+    scenario: { segment: 'B2B', region: 'СЗФО', objectType: '', tariff: 'Бизнес-4300', rent: true },
+    discountPercent: 5,
+    overrides: { monthlyFeeOverride: 0, installationOverride: '', materialLiabilityOverride: ' 12.5 ' },
+  });
+
+  assert.deepEqual(normalized.scenario, {
+    segment: 'B2B', region: 'СЗФО', objectType: '', tariff: 'Бизнес-4300', rent: true,
+    baseMonthlyFee: null, installationCalculated: null,
+  });
+  assert.equal(normalized.discountPercent, 5);
+  assert.deepEqual(normalized.overrides, {
+    monthlyFeeOverride: 0, installationOverride: '', materialLiabilityOverride: '12.5',
+  });
+});
+
 test('priority promotions are selected only for a new draft and copy all catalog fields', () => {
   const promotionContext = loadPromotions();
   global.CESAR_PROMOTIONS = promotionContext.CESAR_PROMOTIONS;
@@ -171,19 +243,34 @@ test('calculation updates the computed snapshot from normalized proposal input',
   assert.equal(proposal.computed.monthlyFee.final, 2800);
 });
 
-test('reset override clears allowed fields, recalculates, and rejects unknown fields', () => {
+test('reset override clears and recalculates all three supported fields', () => {
   const state = loadState();
   global.CESAR_CALCULATOR_CATALOGS = catalogs();
-  const proposal = state.createDefaultProposal();
-  proposal.overrides.monthlyFeeOverride = 0;
-  state.calculateProposal(proposal, catalogs());
-  assert.equal(proposal.computed.monthlyFee.final, 0);
+  const cases = [
+    ['monthlyFeeOverride', 'monthlyFee'],
+    ['installationOverride', 'installation'],
+    ['materialLiabilityOverride', 'materialLiability'],
+  ];
 
-  state.resetOverride(proposal, 'monthlyFeeOverride');
-  assert.equal(proposal.overrides.monthlyFeeOverride, null);
-  assert.equal(proposal.computed.monthlyFee.final, 1990);
-  assert.throws(() => state.resetOverride(proposal, 'unknownOverride'), /unknownOverride/);
+  cases.forEach(([field, computedField]) => {
+    const proposal = state.createDefaultProposal();
+    proposal.overrides[field] = 123;
+    state.calculateProposal(proposal, catalogs());
+    assert.equal(proposal.computed[computedField].overridden, true, field);
+    state.resetOverride(proposal, field);
+    assert.equal(proposal.overrides[field], null, field);
+    assert.equal(proposal.computed[computedField].overridden, false, field);
+  });
   delete global.CESAR_CALCULATOR_CATALOGS;
+});
+
+test('reset override rejects unsupported fields without mutating proposal', () => {
+  const state = loadState();
+  const proposal = state.createDefaultProposal();
+  const before = structuredClone(proposal);
+
+  assert.throws(() => state.resetOverride(proposal, 'unknownOverride'), /unknownOverride/);
+  assert.deepEqual(proposal, before);
 });
 
 test('generated browser catalogs exactly match sources and builder output is deterministic', () => {
