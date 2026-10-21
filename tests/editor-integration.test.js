@@ -21,7 +21,8 @@ class FakeElement {
   removeAttribute(name) { delete this.attributes[name]; }
   hasAttribute(name) { return Object.hasOwn(this.attributes, name); }
   addEventListener(type, listener) { this.listeners[type] = listener; }
-  appendChild(child) { this.children.push(child); this.lastElementChild = child; return child; }
+  appendChild(child) { child.parentElement = this; this.children.push(child); this.lastElementChild = child; return child; }
+  remove() { this.removed = true; if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this); }
   insertBefore(child) { return this.appendChild(child); }
   querySelector() { return new FakeElement(); }
   querySelectorAll() { return []; }
@@ -45,7 +46,10 @@ function createEditorHarness(savedDraft, options = {}) {
   const createdElements = [];
   const selectorElements = new Map();
   const documentListeners = {};
+  const timerCallbacks = [];
+  const body = new FakeElement();
   const document = {
+    body,
     activeElement: null,
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, new FakeElement());
@@ -70,7 +74,7 @@ function createEditorHarness(savedDraft, options = {}) {
       setItem(key, value) { storage.set(key, value); },
     },
     confirm() { return true; },
-    setTimeout(fn) { fn(); return 1; },
+    setTimeout(fn) { if (options.deferTimers) { timerCallbacks.push(fn); return timerCallbacks.length; } fn(); return 1; },
     clearTimeout() {},
     navigator: {},
     location: { origin: 'http://test.local' },
@@ -93,7 +97,7 @@ function createEditorHarness(savedDraft, options = {}) {
   vm.runInNewContext(fs.readFileSync('public/calculator.js', 'utf8'), context);
   context.renderReport = state => { renders.push(JSON.parse(JSON.stringify(state))); return ''; };
   vm.runInNewContext(fs.readFileSync('public/editor.js', 'utf8'), context);
-  return { elements, selectorElements, document, managerInput, cameraInput, storage, renders, fetchBodies, fetchRequests, createdElements, context, fetchCalls: () => fetchCalls };
+  return { elements, selectorElements, document, managerInput, cameraInput, storage, renders, fetchBodies, fetchRequests, createdElements, context, fetchCalls: () => fetchCalls, runTimers() { while (timerCallbacks.length) timerCallbacks.shift()(); } };
 }
 
 test('editor deep-merges an incomplete legacy draft and reset has independent defaults', () => {
@@ -231,7 +235,7 @@ test('XLSX export posts a minimal safe payload, downloads response filename and 
     ok: true,
     headers: { get(name) { return name.toLowerCase() === 'content-disposition' ? "attachment; filename=\"estimate.xlsx\"; filename*=UTF-8''%D0%A1%D0%BC%D0%B5%D1%82%D0%B0%20%D0%A2%D0%B5%D1%81%D1%82.xlsx" : null; } },
     blob: () => Promise.resolve(new Blob(['xlsx'], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })),
-  }) });
+  }), deferTimers: true });
   const button = harness.elements.get('btnExportXlsx');
   button.click('click');
   assert.equal(button.disabled, true);
@@ -249,8 +253,14 @@ test('XLSX export posts a minimal safe payload, downloads response filename and 
   const anchor = harness.createdElements.find(element => element.tagName === 'A');
   assert.equal(anchor.download, 'Смета Тест.xlsx');
   assert.equal(anchor.programmaticClicked, true);
+  assert.ok(harness.document.body.children.includes(anchor));
+  assert.equal(anchor.removed, undefined);
+  assert.equal(harness.context.revokedObjectUrl, undefined, 'object URL remains valid through the click turn');
   assert.equal(button.disabled, false);
   assert.equal(button.textContent, 'Смета XLSX');
+  harness.runTimers();
+  assert.equal(anchor.removed, true);
+  assert.equal(harness.document.body.children.includes(anchor), false);
   assert.equal(harness.context.revokedObjectUrl, 'blob:test');
 });
 

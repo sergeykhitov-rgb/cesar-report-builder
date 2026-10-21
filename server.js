@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { ZipArchive } = require('archiver');
 const { MIME_XLSX, buildEstimateWorkbook, estimateFilename, uniqueEstimateFilenames, validateSystemId } = require('./lib/xlsx-export');
+const { attachArchiveAbort } = require('./lib/archive-lifecycle');
 
 const PORT = process.env.PORT || 4600;
 const ROOT = __dirname;
@@ -267,6 +268,8 @@ const server = http.createServer(function (req, res) {
         }
         var names = uniqueEstimateFilenames(proposal, groups);
         var archive = new ZipArchive({ zlib: { level: 9 } });
+        var archiveLifecycle = attachArchiveAbort(req, res, archive);
+        if (archiveLifecycle.isAborted()) return;
         archive.on('error', function (error) { if (!res.headersSent) exportError(res, error); else res.destroy(error); });
         res.writeHead(200, {
           'Cache-Control': 'no-store',

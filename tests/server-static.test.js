@@ -299,6 +299,22 @@ test('POST xlsx rejects unsafe, unknown and Unicode-lookalike system IDs', async
   }
 });
 
+test('POST xlsx rejects out-of-range numbers and unsafe line or accumulated totals', async t => {
+  const port = await startServer(t);
+  const base = { system: 'ritm', systemLabel: 'РИТМ', code: 'X-1', name: 'Позиция' };
+  const cases = [
+    [{ ...base, quantity: 1_000_001, installedUnitPrice: 1 }],
+    [{ ...base, quantity: 1, installedUnitPrice: 1_000_000_000_001 }],
+    [{ ...base, quantity: 1_000_000, installedUnitPrice: 1_000_000_000_000 }],
+    [0, 1, 2].map(index => ({ ...base, code: 'S-' + index, quantity: 1_000_000, installedUnitPrice: 4_000_000_000 })),
+  ];
+  for (const items of cases) {
+    const response = await postJSON(port, '/api/exports/xlsx', exportPayload(items));
+    assert.equal(response.status, 422);
+    assert.match(response.body.toString('utf8'), /quantity|price|total|safe/i);
+  }
+});
+
 test('POST xlsx rejects malformed exports with structured 400 or 422 and does not crash', async t => {
   const port = await startServer(t);
   const invalid = await postJSON(port, '/api/exports/xlsx', exportPayload([

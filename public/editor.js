@@ -667,8 +667,14 @@
       var url = URL.createObjectURL(result.blob);
       var anchor = document.createElement('a');
       anchor.href = url; anchor.download = filename; anchor.hidden = true;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      document.body.appendChild(anchor);
+      try { anchor.click(); }
+      finally {
+        setTimeout(function () {
+          try { anchor.remove(); }
+          finally { URL.revokeObjectURL(url); }
+        }, 0);
+      }
     }).catch(function (error) {
       toast(error && error.message && error.status === 422 ? error.message : 'Не удалось выгрузить смету. Проверьте соединение и повторите попытку.');
     }).finally(function () {

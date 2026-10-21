@@ -127,6 +127,24 @@ test('builder accepts only known ASCII catalog system IDs', async () => {
   await assert.rejects(() => buildEstimateWorkbook(contaminated, { id: 'ritm', label: 'РИТМ' }), /system|invalid/i);
 });
 
+test('builder enforces numeric bounds and rejects unsafe line or accumulated totals', async () => {
+  const valid = fixture();
+  const item = valid.items[0];
+  const cases = [
+    { ...item, quantity: 1_000_001 },
+    { ...item, installedUnitPrice: 1_000_000_000_001 },
+    { ...item, quantity: 1_000_000, installedUnitPrice: 1_000_000_000_000 },
+  ];
+  for (const invalid of cases) {
+    await assert.rejects(() => buildEstimateWorkbook({ ...valid, items: [invalid] }, { id: 'ritm', label: 'РИТМ' }), /quantity|price|total|safe|invalid/i);
+  }
+  const accumulated = [0, 1, 2].map(index => ({ ...item, code: 'S-' + index, quantity: 1_000_000, installedUnitPrice: 4_000_000_000 }));
+  await assert.rejects(() => buildEstimateWorkbook({ ...valid, items: accumulated }, { id: 'ritm', label: 'РИТМ' }), /total|safe|invalid/i);
+
+  await assert.doesNotReject(() => buildEstimateWorkbook({ ...valid, items: [{ ...item, quantity: 1_000_000, installedUnitPrice: 1 }] }, { id: 'ritm', label: 'РИТМ' }));
+  await assert.doesNotReject(() => buildEstimateWorkbook({ ...valid, items: [{ ...item, quantity: 1, installedUnitPrice: 1_000_000_000_000 }] }, { id: 'ritm', label: 'РИТМ' }));
+});
+
 test('estimate filenames are Cyrillic, sanitized, bounded and deterministically unique', () => {
   const proposal = fixture();
   proposal.client.name = 'ООО \\:Клиент/*?"<>|\u0001 с очень длинным названием '.repeat(8);
