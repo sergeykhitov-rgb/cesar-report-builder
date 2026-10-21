@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { ZipArchive } = require('archiver');
 const { MIME_XLSX, buildEstimateWorkbook, estimateFilename, uniqueEstimateFilenames, validateSystemId } = require('./lib/xlsx-export');
-const { MIME_PDF, buildProposalPdf, proposalFilename, uniqueProposalFilenames } = require('./lib/pdf-export');
+const { MIME_PDF, buildProposalPdf, proposalFilename, uniqueProposalFilenames, normalizeProposal } = require('./lib/pdf-export');
 const { attachArchiveAbort } = require('./lib/archive-lifecycle');
 
 const PORT = process.env.PORT || 4600;
@@ -18,6 +18,9 @@ const PUB = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data', 'reports');
 const SEED = path.join(ROOT, 'seed'); // встроенные постоянные отчёты (в образе, переживают перезапуск)
 const MAX_BODY = 30 * 1024 * 1024; // 30 МБ (фото в base64)
+const MAX_PDF_BODY = 1024 * 1024;
+const MAX_CONCURRENT_PDF_EXPORTS = 2;
+let activePdfExports = 0;
 
 fs.mkdirSync(DATA, { recursive: true });
 
@@ -122,17 +125,29 @@ function serveFile(req, res, file) {
   });
 }
 
-function readBody(req) {
+function readBody(req, limit) {
   return new Promise(function (resolve, reject) {
-    var chunks = [], size = 0;
+    var chunks = [], size = 0, settled = false;
+    var maximum = limit || MAX_BODY;
     req.on('data', function (c) {
+      if (settled) return;
       size += c.length;
-      if (size > MAX_BODY) { reject(new Error('too large')); req.destroy(); return; }
+      if (size > maximum) {
+        settled = true;
+        var error = new Error('payload too large');
+        error.code = 'PAYLOAD_TOO_LARGE';
+        reject(error);
+        return;
+      }
       chunks.push(c);
     });
-    req.on('end', function () { resolve(Buffer.concat(chunks).toString('utf8')); });
-    req.on('error', reject);
+    req.on('end', function () { if (!settled) { settled = true; resolve(Buffer.concat(chunks).toString('utf8')); } });
+    req.on('error', function (error) { if (!settled) { settled = true; reject(error); } });
   });
+}
+
+function requestDisconnected(req, res) {
+  return req.aborted || (req.destroyed && !req.complete) || res.destroyed;
 }
 
 /* лёгкая санитизация: ограничиваем размер строк и структуру */
@@ -288,32 +303,37 @@ const server = http.createServer(function (req, res) {
 
   // --- API: отдельные PDF-предложения по системам ---
   if (req.method === 'POST' && pathname === '/api/exports/pdf') {
-    readBody(req).then(async function (raw) {
+    if (activePdfExports >= MAX_CONCURRENT_PDF_EXPORTS) {
+      send(res, 503, JSON.stringify({ error: 'PDF export capacity reached' }), { 'Content-Type': 'application/json; charset=utf-8', 'Retry-After': '1' });
+      return;
+    }
+    activePdfExports += 1;
+    (async function () {
+      try {
+      var raw = await readBody(req, MAX_PDF_BODY);
+      if (requestDisconnected(req, res)) return;
       var parsed;
       try { parsed = JSON.parse(raw); } catch (e) { return sendJSON(res, 400, { error: 'bad json' }); }
-      try {
         if (parsed && Array.isArray(parsed.items) && parsed.items.length > 200) {
           var tooMany = new Error('items must contain 1..200 entries'); tooMany.code = 'INVALID_EXPORT'; tooMany.path = 'items'; throw tooMany;
         }
         var proposal = clean(parsed);
         var groups = exportGroupsFromItems(proposal && proposal.items);
-        // PDFKit shares font/image caches internally; build branded documents in sequence
-        // so page headers cannot bleed between concurrently rendered proposals.
-        var buffers = [];
-        for (var pdfIndex = 0; pdfIndex < groups.length; pdfIndex += 1) {
-          buffers.push(await buildProposalPdf(proposal, groups[pdfIndex]));
-        }
+        groups.forEach(function (group) { normalizeProposal(proposal, group); });
+        if (requestDisconnected(req, res)) return;
         if (groups.length === 1) {
-          return send(res, 200, buffers[0], {
+          var singleBuffer = await buildProposalPdf(proposal, groups[0]);
+          if (requestDisconnected(req, res)) return;
+          return send(res, 200, singleBuffer, {
             'Content-Type': MIME_PDF,
             'Content-Disposition': attachmentHeader('proposal.pdf', proposalFilename(proposal, groups[0])),
-            'Content-Length': buffers[0].length,
+            'Content-Length': singleBuffer.length,
           });
         }
         var names = uniqueProposalFilenames(proposal, groups);
         var archive = new ZipArchive({ zlib: { level: 9 } });
         var archiveLifecycle = attachArchiveAbort(req, res, archive);
-        if (archiveLifecycle.isAborted()) return;
+        if (archiveLifecycle.isAborted() || requestDisconnected(req, res)) return;
         archive.on('error', function (error) { if (!res.headersSent) exportError(res, error); else res.destroy(error); });
         res.writeHead(200, {
           'Cache-Control': 'no-store',
@@ -321,10 +341,23 @@ const server = http.createServer(function (req, res) {
           'Content-Disposition': attachmentHeader('proposals.zip', 'Коммерческие предложения.zip'),
         });
         archive.pipe(res);
-        buffers.forEach(function (buffer, index) { archive.append(buffer, { name: names[index], date: new Date('2000-01-01T00:00:00.000Z') }); });
+        for (var pdfIndex = 0; pdfIndex < groups.length; pdfIndex += 1) {
+          if (archiveLifecycle.isAborted() || requestDisconnected(req, res)) return;
+          var buffer = await buildProposalPdf(proposal, groups[pdfIndex]);
+          if (archiveLifecycle.isAborted() || requestDisconnected(req, res)) return;
+          archive.append(buffer, { name: names[pdfIndex], date: new Date('2000-01-01T00:00:00.000Z') });
+        }
+        if (archiveLifecycle.isAborted() || requestDisconnected(req, res)) return;
         await archive.finalize();
-      } catch (error) { if (res.headersSent) res.destroy(error); else exportError(res, error); }
-    }).catch(function () { sendJSON(res, 413, { error: 'payload too large' }); });
+      } catch (error) {
+        if (requestDisconnected(req, res)) return;
+        if (error && error.code === 'PAYLOAD_TOO_LARGE') sendJSON(res, 413, { error: 'payload too large' });
+        else if (res.headersSent) res.destroy(error);
+        else exportError(res, error);
+      } finally {
+        activePdfExports -= 1;
+      }
+    })();
     return;
   }
 

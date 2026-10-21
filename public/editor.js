@@ -686,7 +686,7 @@
         setTimeout(function () {
           try { anchor.remove(); }
           finally { URL.revokeObjectURL(url); }
-        }, 0);
+        }, 5000);
       }
     }).catch(function (error) {
       toast(error && error.message && error.status === 422 ? error.message : settings.failure);

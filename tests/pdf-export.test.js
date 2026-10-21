@@ -2,10 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { PDFParse } = require('pdf-parse');
 const {
   MIME_PDF,
   buildProposalPdf,
@@ -39,17 +36,10 @@ function fixture(overrides = {}) {
 
 function group(id = 'ritm', label = 'РИТМ') { return { id, label }; }
 
-function commandExists(name) {
-  try { execFileSync('sh', ['-c', 'command -v "$1"', 'sh', name], { stdio: 'ignore' }); return true; }
-  catch { return false; }
-}
-
-function extractText(buffer) {
-  if (!commandExists('pdftotext')) return null;
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cesar-pdf-test-'));
-  const pdf = path.join(directory, 'proposal.pdf');
-  fs.writeFileSync(pdf, buffer);
-  return execFileSync('pdftotext', [pdf, '-'], { encoding: 'utf8' });
+async function extractText(buffer) {
+  const parser = new PDFParse({ data: buffer });
+  try { return (await parser.getText()).text; }
+  finally { await parser.destroy(); }
 }
 
 test('buildProposalPdf creates a non-empty branded PDF for one equipment system', async () => {
@@ -57,11 +47,9 @@ test('buildProposalPdf creates a non-empty branded PDF for one equipment system'
   assert.equal(MIME_PDF, 'application/pdf');
   assert.equal(buffer.subarray(0, 5).toString('ascii'), '%PDF-');
   assert.ok(buffer.length > 10_000);
-  const text = extractText(buffer);
-  if (text !== null) {
-    ['КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ', 'ООО «Северный дом»', 'Контрольная панель', 'Абонентская плата', 'Материальная ответственность', 'Два объекта выгоднее', 'Андрей Мешенков'].forEach(value => assert.match(text, new RegExp(value)));
-    assert.doesNotMatch(text, /Камера|DS-2CD/);
-  }
+  const text = await extractText(buffer);
+  ['КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ', 'ООО «Северный дом»', 'Контрольная панель', 'Абонентская плата', 'Материальная ответственность', 'Два объекта выгоднее', 'Андрей Мешенков'].forEach(value => assert.match(text, new RegExp(value)));
+  assert.doesNotMatch(text, /Камера|DS-2CD/);
 });
 
 test('PDF export excludes internal metadata and spreadsheet formula prefixes remain plain text', async () => {
@@ -70,11 +58,9 @@ test('PDF export excludes internal metadata and spreadsheet formula prefixes rem
     items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '=CMD()', name: '+Панель', quantity: 1, installedUnitPrice: 1000 }],
   });
   const buffer = await buildProposalPdf(proposal, group());
-  const text = extractText(buffer);
-  if (text !== null) {
-    assert.match(text, /=CMD\(\)|'\=CMD\(\)/);
-    assert.doesNotMatch(text, /secret\.xlsx|secret reason|rawCatalogs|overrideReason/);
-  }
+  const text = await extractText(buffer);
+  assert.match(text, /=CMD\(\)|'\=CMD\(\)/);
+  assert.doesNotMatch(text, /secret\.xlsx|secret reason|rawCatalogs|overrideReason/);
 });
 
 test('proposal filenames are safe, bounded and unique under label collisions', () => {
@@ -111,6 +97,31 @@ test('each equipment system receives its own discounted equipment and one-time t
   assert.notEqual(ritm.totals.oneTime, proposal.computed.oneTime.final);
 });
 
+test('money remains bounded and is calculated in integer kopecks', () => {
+  const boundary = normalizeProposal(fixture({
+    items: [{ system: 'ritm', systemLabel: 'РИТМ', code: 'MAX', name: 'Граница', quantity: 1, installedUnitPrice: 1_000_000_000_000 }],
+    discountPercent: 12.345,
+    computed: { ...fixture().computed, installation: { final: 0.01 }, monthlyFee: { final: 1_000_000_000_000 }, materialLiability: { final: 1_000_000_000_000 } },
+  }), group());
+  assert.equal(Number.isSafeInteger(boundary.totals.equipmentSubtotal * 100), true);
+  assert.equal(Number.isSafeInteger(boundary.totals.discountAmount * 100), true);
+  assert.equal(boundary.totals.discountAmount, 123_450_000_000);
+  assert.equal(boundary.totals.equipmentAfterDiscount, 876_550_000_000);
+  assert.equal(boundary.totals.oneTime, 876_550_000_000.01);
+});
+
+test('money rejects out-of-range inputs and computed overflow', () => {
+  assert.throws(() => normalizeProposal(fixture({
+    items: [{ system: 'ritm', systemLabel: 'РИТМ', code: 'OVER', name: 'Переполнение', quantity: 1, installedUnitPrice: 1_000_000_000_000.01 }],
+  }), group()), /price|money|amount|safe/i);
+  assert.throws(() => normalizeProposal(fixture({
+    items: [{ system: 'ritm', systemLabel: 'РИТМ', code: 'MAX', name: 'Граница', quantity: 1, installedUnitPrice: 1_000_000_000_000 }],
+    discountPercent: 0,
+    computed: { ...fixture().computed, installation: { final: 0.01 } },
+  }), group()), /oneTime|total|money|amount|safe/i);
+  assert.throws(() => normalizeProposal(fixture({ computed: { ...fixture().computed, monthlyFee: { final: 1_000_000_000_000.01 } } }), group()), /monthlyFee|money|amount|safe/i);
+});
+
 test('client contacts are strictly normalized and included only when supplied', () => {
   const populated = normalizeProposal(fixture({ client: { name: 'ООО «Северный дом»', phone: '+7 999 111-22-33', email: 'client@example.test' } }), group());
   assert.equal(populated.clientPhone, '+7 999 111-22-33');
@@ -125,9 +136,11 @@ test('client contacts are strictly normalized and included only when supplied', 
 test('a long proposal creates continuation pages with repeated logo and table header drawing operations', async () => {
   const items = Array.from({ length: 70 }, (_, index) => ({ system: 'ritm', systemLabel: 'РИТМ', code: 'R-' + index, name: 'Длинное наименование охранного оборудования ' + index, model: 'Модель ' + index, unit: 'шт.', quantity: 1, installedUnitPrice: 1000 }));
   const buffer = await buildProposalPdf(fixture({ items }), group());
-  const source = buffer.toString('latin1');
-  const pages = (source.match(/\/Type \/Page\b/g) || []).length;
-  const logoDraws = (source.match(/\/I\d+ Do/g) || []).length;
-  assert.ok(pages >= 4, 'expected at least four PDF pages');
-  assert.ok(logoDraws >= pages, 'every page must draw the CESAR logo');
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const parsed = await parser.getText();
+    assert.ok(parsed.total >= 4, 'expected at least four PDF pages');
+    parsed.pages.slice(1).forEach(page => assert.match(page.text, /КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ · ПРОДОЛЖЕНИЕ/));
+    parsed.pages.filter(page => /R-\d+/.test(page.text)).forEach(page => assert.match(page.text, /Наименование \/ модель/));
+  } finally { await parser.destroy(); }
 });

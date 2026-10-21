@@ -47,6 +47,18 @@ function postJSON(port, pathname, payload) {
   });
 }
 
+function abortPostJSON(port, pathname, payload) {
+  return new Promise(resolve => {
+    const body = Buffer.from(JSON.stringify(payload));
+    const req = http.request({
+      host: '127.0.0.1', port, path: pathname, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': body.length },
+    });
+    req.on('error', () => resolve());
+    req.end(body, () => setTimeout(() => { req.destroy(); resolve(); }, 10));
+  });
+}
+
 function exportPayload(items) {
   return {
     client: { name: 'ООО Тест' },
@@ -383,5 +395,46 @@ test('POST pdf rejects unsafe systems and invalid numeric totals without crashin
   const invalidResponse = await postJSON(port, '/api/exports/pdf', invalid);
   assert.equal(invalidResponse.status, 422);
   assert.match(invalidResponse.body.toString('utf8'), /monthlyFee|finite|amount/i);
+  const overflow = exportPayload([{ system: 'ritm', systemLabel: 'РИТМ', code: 'MAX', name: 'Граница', quantity: 1, installedUnitPrice: 1_000_000_000_000 }]);
+  overflow.discountPercent = 0;
+  overflow.computed.installation.final = 0.01;
+  const overflowResponse = await postJSON(port, '/api/exports/pdf', overflow);
+  assert.equal(overflowResponse.status, 422);
+  assert.match(overflowResponse.body.toString('utf8'), /oneTime|safe money limit/i);
   assert.equal((await request(port, '/')).status, 200);
+});
+
+test('POST pdf enforces its own small body limit', async t => {
+  const port = await startServer(t);
+  const payload = exportPayload([{ system: 'ritm', systemLabel: 'РИТМ', code: 'R-1', name: 'Панель', quantity: 1, installedUnitPrice: 1000 }]);
+  payload.unusedPadding = 'x'.repeat(1024 * 1024);
+  const response = await postJSON(port, '/api/exports/pdf', payload);
+  assert.equal(response.status, 413);
+});
+
+test('POST pdf limits concurrent exports and advertises retry timing', async t => {
+  const port = await startServer(t);
+  const items = Array.from({ length: 200 }, (_, index) => ({
+    system: 'ritm', systemLabel: 'РИТМ', code: 'R-' + index,
+    name: 'Длинное наименование охранного оборудования ' + index,
+    model: 'Модель ' + index, quantity: 1, installedUnitPrice: 1000,
+  }));
+  const responses = await Promise.all([0, 1, 2].map(() => postJSON(port, '/api/exports/pdf', exportPayload(items))));
+  const busy = responses.filter(response => response.status === 503);
+  assert.equal(busy.length, 1);
+  assert.equal(busy[0].headers['retry-after'], '1');
+  assert.equal(responses.filter(response => response.status === 200).length, 2);
+});
+
+test('aborted PDF export releases its concurrency slot', async t => {
+  const port = await startServer(t);
+  const items = Array.from({ length: 200 }, (_, index) => ({
+    system: 'ritm', systemLabel: 'РИТМ', code: 'A-' + index,
+    name: 'Оборудование ' + index, model: 'Модель ' + index,
+    quantity: 1, installedUnitPrice: 1000,
+  }));
+  await abortPostJSON(port, '/api/exports/pdf', exportPayload(items));
+  await new Promise(resolve => setTimeout(resolve, 1200));
+  const responses = await Promise.all([0, 1].map(() => postJSON(port, '/api/exports/pdf', exportPayload(items.slice(0, 2)))));
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 200]);
 });

@@ -47,6 +47,7 @@ function createEditorHarness(savedDraft, options = {}) {
   const selectorElements = new Map();
   const documentListeners = {};
   const timerCallbacks = [];
+  const timerDelays = [];
   const body = new FakeElement();
   const document = {
     body,
@@ -74,7 +75,7 @@ function createEditorHarness(savedDraft, options = {}) {
       setItem(key, value) { storage.set(key, value); },
     },
     confirm() { return true; },
-    setTimeout(fn) { if (options.deferTimers) { timerCallbacks.push(fn); return timerCallbacks.length; } fn(); return 1; },
+    setTimeout(fn, delay) { timerDelays.push(delay); if (options.deferTimers) { timerCallbacks.push(fn); return timerCallbacks.length; } fn(); return 1; },
     clearTimeout() {},
     navigator: {},
     location: { origin: 'http://test.local' },
@@ -97,7 +98,7 @@ function createEditorHarness(savedDraft, options = {}) {
   vm.runInNewContext(fs.readFileSync('public/calculator.js', 'utf8'), context);
   context.renderReport = state => { renders.push(JSON.parse(JSON.stringify(state))); return ''; };
   vm.runInNewContext(fs.readFileSync('public/editor.js', 'utf8'), context);
-  return { elements, selectorElements, document, managerInput, cameraInput, storage, renders, fetchBodies, fetchRequests, createdElements, context, fetchCalls: () => fetchCalls, runTimers() { while (timerCallbacks.length) timerCallbacks.shift()(); } };
+  return { elements, selectorElements, document, managerInput, cameraInput, storage, renders, fetchBodies, fetchRequests, createdElements, context, timerDelays, fetchCalls: () => fetchCalls, runTimers() { while (timerCallbacks.length) timerCallbacks.shift()(); } };
 }
 
 test('editor deep-merges an incomplete legacy draft and reset has independent defaults', () => {
@@ -250,6 +251,7 @@ test('PDF export posts public proposal content, downloads filename and safely re
   assert.equal(anchor.download, 'КП Тест.pdf');
   assert.equal(button.disabled, false);
   assert.equal(harness.context.revokedObjectUrl, undefined);
+  assert.ok(harness.timerDelays.some(delay => delay >= 5000));
   harness.runTimers();
   assert.equal(anchor.removed, true);
   assert.equal(harness.context.revokedObjectUrl, 'blob:test');
