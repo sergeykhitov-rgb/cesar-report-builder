@@ -207,6 +207,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* клиентская спецификация коммерческого предложения */
 .rp-proposal { margin-top: var(--pad); border-top: 1px solid var(--line); }
+.rp-preview-warnings { margin: 18px var(--pad) 0; padding: 13px 15px; border-left: 3px solid var(--yellow); background: #fff8d9; }
+.rp-preview-warnings strong { font-size: 12px; }
+.rp-preview-warnings p { margin-top: 5px; color: var(--ink-2); font-size: 12px; line-height: 1.45; }
 .rp-proposal-client, .rp-proposal-details { margin: 16px var(--pad) 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 18px; }
 .rp-proposal-client .rp-row, .rp-proposal-details .rp-row { display: grid; gap: 2px; }
 .rp-proposal-client .k, .rp-proposal-details .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }

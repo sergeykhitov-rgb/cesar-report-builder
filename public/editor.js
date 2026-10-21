@@ -3,6 +3,42 @@
   'use strict';
   function identity(item) { return String(item.system || '') + ':' + String(item.code || ''); }
   function unique(values) { return values.filter(function (value, index) { return value && values.indexOf(value) === index; }); }
+  function publicItem(item) {
+    return { system: item.system, systemLabel: item.systemLabel, code: item.code, name: item.name, model: item.model,
+      unit: item.unit, quantity: item.quantity, installedUnitPrice: item.installedUnitPrice,
+      lineTotal: Number.isFinite(item.lineTotal) ? item.lineTotal : Number(item.quantity) * Number(item.installedUnitPrice) };
+  }
+  function finalOnly(value) { return { final: value && value.final != null ? value.final : null }; }
+  function publicReportProjection(draft) {
+    var source = draft || {}, proposal = source.proposal || {}, computed = proposal.computed || {};
+    var object = source.object || {}, summary = source.summary || {};
+    var safeItems = (computed.equipment && computed.equipment.items || proposal.items || []).map(publicItem);
+    return {
+      title: source.title, subtitle: source.subtitle, objectTitle: source.objectTitle,
+      object: { pin: object.pin, owner: object.owner, brand: object.brand, model: object.model, plate: object.plate, address: object.address }, heroPhoto: source.heroPhoto,
+      summary: { alarms: summary.alarms, incidents: summary.incidents, alarmsLabel: summary.alarmsLabel, incidentsLabel: summary.incidentsLabel, extraLabel: summary.extraLabel }, eventsTitle: source.eventsTitle,
+      events: (source.events || []).map(function (event) { return { signal: event.signal, date: event.date, time: event.time, address: event.address, photo: event.photo, note: event.note }; }),
+      disclaimer: source.disclaimer,
+      promotions: (source.promotions || []).map(function (item) { return { title: item.title, description: item.description, image: item.image }; }),
+      manager: source.manager ? { label: source.manager.label, name: source.manager.name, role: source.manager.role, phone: source.manager.phone, email: source.manager.email, photo: source.manager.photo } : {},
+      proposal: {
+        client: proposal.client ? { name: proposal.client.name, phone: proposal.client.phone, email: proposal.client.email } : {},
+        scenario: proposal.scenario ? { segment: proposal.scenario.segment, region: proposal.scenario.region, objectType: proposal.scenario.objectType, tariff: proposal.scenario.tariff, rent: proposal.scenario.rent } : {},
+        items: safeItems, selectedOptionNames: (proposal.selectedOptionNames || []).slice(), discountPercent: proposal.discountPercent,
+        computed: {
+          equipment: computed.equipment ? { subtotal: computed.equipment.subtotal, discountAmount: computed.equipment.discountAmount, afterDiscount: computed.equipment.afterDiscount } : {},
+          installation: finalOnly(computed.installation), oneTime: finalOnly(computed.oneTime), monthlyFee: finalOnly(computed.monthlyFee), materialLiability: finalOnly(computed.materialLiability),
+          tariff: computed.tariff ? { resolvedName: computed.tariff.resolvedName } : {}
+        }
+      }
+    };
+  }
+  function nextFocusAfterDelete(items, key) {
+    var index = (items || []).findIndex(function (item) { return (item.identity || identity(item)) === key; });
+    if (index === -1 || items.length <= 1) return 'equipmentSearch';
+    var target = items[index + 1] || items[index - 1];
+    return 'qty-input:' + (target.identity || identity(target));
+  }
   var money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
   var ProposalUI = {
     filterEquipment: function (items, filters) {
@@ -48,7 +84,9 @@
     compatibleValue: function (current, values) { return values.indexOf(current) === -1 ? '' : current; },
     formatMoney: function (value) { return typeof value === 'number' && Number.isFinite(value) ? money.format(value) : '—'; },
     overrideView: function (value) { return { calculated: ProposalUI.formatMoney(value && value.calculated), final: ProposalUI.formatMoney(value && value.final), badge: value && value.overridden ? 'Изменено вручную' : '' }; },
-    isProposalValid: function (proposal) { return !!(proposal && proposal.client && proposal.client.name && proposal.scenario && proposal.scenario.segment && proposal.scenario.region && (proposal.scenario.segment === 'B2B' || proposal.scenario.objectType) && proposal.items && proposal.items.some(function (item) { return item.quantity > 0; }) && proposal.computed && !(proposal.computed.warnings || []).some(function (warning) { return /^MISSING_|^INVALID_/.test(warning.code); })); }
+    isProposalValid: function (proposal) { return !!(proposal && proposal.client && proposal.client.name && proposal.scenario && proposal.scenario.segment && proposal.scenario.region && (proposal.scenario.segment === 'B2B' || proposal.scenario.objectType) && proposal.items && proposal.items.some(function (item) { return item.quantity > 0; }) && proposal.computed && !(proposal.computed.warnings || []).some(function (warning) { return /^MISSING_|^INVALID_/.test(warning.code); })); },
+    publicReportProjection: publicReportProjection,
+    nextFocusAfterDelete: nextFocusAfterDelete
   };
   root.CesarProposalUI = ProposalUI;
   if (typeof module === 'object' && module.exports) module.exports.CesarProposalUI = ProposalUI;
@@ -80,6 +118,7 @@
   };
 
   var state = load();
+  var pendingEquipmentFocus = null;
 
   /* ---------- утилиты состояния ---------- */
   function recalculateProposal(draft) {
@@ -143,7 +182,7 @@
   function render() {
     clearTimeout(renderTimer);
     renderTimer = setTimeout(function () {
-      previewEl.innerHTML = window.renderReport(state);
+      previewEl.innerHTML = root.renderReport(state, { editorPreview: true });
     }, 60);
   }
 
@@ -212,8 +251,29 @@
   }
   function commitProposal() {
     if (editorBlocked) { showBlockedWarning(); return; }
+    if (!pendingEquipmentFocus) pendingEquipmentFocus = captureEquipmentFocus();
     renderScenarioControls();
     recalculateProposal(); save(); render(); renderCalculator();
+  }
+  function captureEquipmentFocus() {
+    var active = document.activeElement;
+    if (!active) return null;
+    if (active.id === 'equipmentSearch') return { key: 'equipmentSearch' };
+    var control = active.closest && active.closest('[data-focus-key]');
+    if (!control) return null;
+    var descriptor = { key: control.getAttribute('data-focus-key') };
+    try { descriptor.start = active.selectionStart; descriptor.end = active.selectionEnd; } catch (error) {}
+    return descriptor;
+  }
+  function restoreEquipmentFocus() {
+    if (!pendingEquipmentFocus) return;
+    var descriptor = pendingEquipmentFocus; pendingEquipmentFocus = null;
+    var target = descriptor.key === 'equipmentSearch' ? document.getElementById('equipmentSearch') : Array.from(document.querySelectorAll('[data-focus-key]')).find(function (node) { return node.getAttribute('data-focus-key') === descriptor.key; });
+    if (!target || typeof target.focus !== 'function') return;
+    target.focus({ preventScroll: true });
+    if (typeof descriptor.start === 'number' && typeof target.setSelectionRange === 'function') {
+      try { target.setSelectionRange(descriptor.start, descriptor.end); } catch (error) {}
+    }
   }
   function renderScenarioControls() {
     var proposal = state.proposal, scenario = proposal.scenario;
@@ -255,23 +315,24 @@
       function cell(label, text, className) { var node = document.createElement('div'); node.className = className || ''; node.setAttribute('data-label', label); node.textContent = text; card.appendChild(node); }
       cell('Код', item.code, 'spec-code'); cell('Модель и наименование', [item.model, item.name].filter(Boolean).join(' · '), 'spec-name');
       var quantity = document.createElement('div'); quantity.className = 'spec-quantity'; quantity.setAttribute('data-label', 'Количество');
-      var minus = document.createElement('button'); minus.type = 'button'; minus.textContent = '−'; minus.setAttribute('aria-label', 'Уменьшить количество');
-      var input = document.createElement('input'); input.type = 'number'; input.min = '1'; input.step = '1'; input.value = item.quantity; input.setAttribute('aria-label', 'Количество ' + item.name);
-      var plus = document.createElement('button'); plus.type = 'button'; plus.textContent = '+'; plus.setAttribute('aria-label', 'Увеличить количество');
+      var minus = document.createElement('button'); minus.type = 'button'; minus.textContent = '−'; minus.setAttribute('aria-label', 'Уменьшить количество'); minus.setAttribute('data-focus-key', 'qty-minus:' + key);
+      var input = document.createElement('input'); input.type = 'number'; input.min = '1'; input.step = '1'; input.value = item.quantity; input.setAttribute('aria-label', 'Количество ' + item.name); input.setAttribute('data-focus-key', 'qty-input:' + key);
+      var plus = document.createElement('button'); plus.type = 'button'; plus.textContent = '+'; plus.setAttribute('aria-label', 'Увеличить количество'); plus.setAttribute('data-focus-key', 'qty-plus:' + key);
       var error = document.createElement('small'); error.className = 'row-error';
       minus.addEventListener('click', function () { if (item.quantity > 1) { ProposalUI.setQuantity(state.proposal, key, item.quantity - 1); commitProposal(); } });
       plus.addEventListener('click', function () { ProposalUI.setQuantity(state.proposal, key, item.quantity + 1); commitProposal(); });
-      input.addEventListener('change', function () { var result = ProposalUI.setQuantity(state.proposal, key, input.value); if (!result.valid) { error.textContent = result.message; input.value = item.quantity; } else commitProposal(); });
+      input.addEventListener('input', function () { var result = ProposalUI.setQuantity(state.proposal, key, input.value); if (!result.valid) error.textContent = result.message; else commitProposal(); });
+      input.addEventListener('change', function () { var result = ProposalUI.setQuantity(state.proposal, key, input.value); if (!result.valid) { error.textContent = result.message; input.value = item.quantity; } });
       quantity.appendChild(minus); quantity.appendChild(input); quantity.appendChild(plus); quantity.appendChild(error); card.appendChild(quantity);
       var price = document.createElement('div'); price.className = 'spec-price'; price.setAttribute('data-label', 'Цена за ед.');
-      var priceInput = document.createElement('input'); priceInput.type = 'number'; priceInput.min = '0'; priceInput.value = item.installedUnitPrice; priceInput.setAttribute('aria-label', 'Цена ' + item.name);
+      var priceInput = document.createElement('input'); priceInput.type = 'number'; priceInput.min = '0'; priceInput.value = item.installedUnitPrice; priceInput.setAttribute('aria-label', 'Цена ' + item.name); priceInput.setAttribute('data-focus-key', 'price-input:' + key);
       var source = document.createElement('small'); source.textContent = 'Из справочника: ' + ProposalUI.formatMoney(item.sourceInstalledUnitPrice == null ? item.installedUnitPrice : item.sourceInstalledUnitPrice);
-      var priceReset = document.createElement('button'); priceReset.type = 'button'; priceReset.className = 'reset-value'; priceReset.textContent = item.priceOverridden ? 'Изменено вручную · сбросить' : 'По справочнику'; priceReset.disabled = !item.priceOverridden;
-      priceInput.addEventListener('change', function () { if (ProposalUI.setManualPrice(state.proposal, key, priceInput.value)) commitProposal(); });
-      priceReset.addEventListener('click', function () { ProposalUI.resetManualPrice(state.proposal, key); commitProposal(); });
+      var priceReset = document.createElement('button'); priceReset.type = 'button'; priceReset.className = 'reset-value'; priceReset.textContent = item.priceOverridden ? 'Изменено вручную · сбросить' : 'По справочнику'; priceReset.disabled = !item.priceOverridden; priceReset.setAttribute('data-focus-key', 'price-reset:' + key);
+      priceInput.addEventListener('input', function () { if (ProposalUI.setManualPrice(state.proposal, key, priceInput.value)) commitProposal(); });
+      priceReset.addEventListener('click', function () { pendingEquipmentFocus = { key: 'price-input:' + key }; ProposalUI.resetManualPrice(state.proposal, key); commitProposal(); });
       price.appendChild(priceInput); price.appendChild(source); price.appendChild(priceReset); card.appendChild(price);
       cell('Сумма', ProposalUI.formatMoney(item.quantity * item.installedUnitPrice), 'spec-total');
-      var del = document.createElement('button'); del.type = 'button'; del.className = 'spec-delete'; del.textContent = 'Удалить'; del.addEventListener('click', function () { ProposalUI.removeEquipment(state.proposal, key); commitProposal(); }); card.appendChild(del);
+      var del = document.createElement('button'); del.type = 'button'; del.className = 'spec-delete'; del.textContent = 'Удалить'; del.setAttribute('data-focus-key', 'delete:' + key); del.addEventListener('click', function () { pendingEquipmentFocus = { key: ProposalUI.nextFocusAfterDelete(state.proposal.items, key) }; ProposalUI.removeEquipment(state.proposal, key); commitProposal(); }); card.appendChild(del);
       host.appendChild(card);
     });
   }
@@ -285,7 +346,7 @@
     var changes = computed.tariff && computed.tariff.automaticChanges || [];
     changes.forEach(function (change) { var note = document.createElement('p'); note.className = 'calculation-note'; note.textContent = 'Тариф изменён автоматически: ' + change.from + ' → ' + change.to + '. ' + change.reason + '.'; warnings.appendChild(note); });
     (computed.warnings || []).forEach(function (warning) { var note = document.createElement('p'); note.className = 'warning-item'; note.textContent = warning.message + ' Проверьте параметры расчёта.'; warnings.appendChild(note); });
-    var valid = ProposalUI.isProposalValid(state.proposal); ['btnExportPdf', 'btnExportXlsx'].forEach(function (id) { var button = document.getElementById(id); button.disabled = !valid; button.setAttribute('aria-disabled', String(!valid)); button.title = 'Выгрузка будет доступна после сохранения расчёта'; });
+    ['btnExportPdf', 'btnExportXlsx'].forEach(function (id) { var button = document.getElementById(id); button.disabled = true; button.setAttribute('aria-disabled', 'true'); button.title = 'Выгрузка PDF и Excel будет подключена на следующем этапе.'; });
   }
   function renderCalculator() {
     renderScenarioControls();
@@ -296,7 +357,7 @@
     document.getElementById('proposalDiscount').value = p.discountPercent;
     document.querySelectorAll('#proposalOptions input').forEach(function (input) { input.checked = p.selectedOptionNames.indexOf(input.value) !== -1; });
     [['overrideInstallation','installationOverride'],['overrideMonthlyFee','monthlyFeeOverride'],['overrideMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { var value = p.overrides[binding[1]]; document.getElementById(binding[0]).value = value == null ? '' : value; });
-    renderSelectedEquipment(); renderTotals();
+    renderSelectedEquipment(); renderTotals(); restoreEquipmentFocus();
   }
   function bindCalculator() {
     var catalog = root.CESAR_CALCULATOR_CATALOGS.calculator, equipmentCatalog = root.CESAR_CALCULATOR_CATALOGS.equipment.items;
@@ -311,7 +372,6 @@
     document.getElementById('equipmentSearch').addEventListener('input', renderSearchResults); systemSelect.addEventListener('change', renderSearchResults);
     [['overrideInstallation','installationOverride'],['overrideMonthlyFee','monthlyFeeOverride'],['overrideMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { var input = document.getElementById(binding[0]); input.addEventListener('change', function () { state.proposal.overrides[binding[1]] = input.value; commitProposal(); }); });
     [['resetInstallation','installationOverride'],['resetMonthlyFee','monthlyFeeOverride'],['resetMaterialLiability','materialLiabilityOverride']].forEach(function (binding) { document.getElementById(binding[0]).addEventListener('click', function () { root.CesarProposalState.resetOverride(state.proposal, binding[1], root.CESAR_CALCULATOR_CATALOGS); document.getElementById('override' + binding[0].slice(5)).value = ''; save(); render(); renderCalculator(); }); });
-    ['btnExportPdf','btnExportXlsx'].forEach(function (id) { document.getElementById(id).addEventListener('click', function () { toast('Выгрузка будет доступна после сохранения расчёта'); }); });
     renderCalculator();
   }
 
@@ -504,7 +564,7 @@
     btnGen.disabled = true; btnGen.textContent = 'Публикуем…';
     fetch('/api/reports', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state)
+      body: JSON.stringify(ProposalUI.publicReportProjection(state))
     }).then(function (r) {
       if (!r.ok) throw new Error('server');
       return r.json();

@@ -131,5 +131,56 @@ test('responsive and accessible contracts are explicit', () => {
 test('export controls start disabled and explain their future availability', () => {
   assert.match(html, /id="btnExportPdf"[^>]*disabled/);
   assert.match(html, /id="btnExportXlsx"[^>]*disabled/);
-  assert.match(html, /Выгрузка будет доступна после сохранения расчёта/);
+  assert.match(html, /Выгрузка PDF и Excel будет подключена на следующем этапе\./);
+});
+
+test('public projection strips every calculator-internal field', () => {
+  const ui = loadUi();
+  const draft = {
+    title: 'КП', subtitle: 'Для клиента', object: { pin: '1', address: 'Москва' },
+    heroPhoto: '/hero.jpg', summary: { alarms: '1' }, eventsTitle: 'События', events: [],
+    promotions: [{ id: 'promo', title: 'Акция', description: 'Текст', image: '/p.jpg', priority: 100 }],
+    manager: { name: 'Менеджер', email: 'm@example.test', internal: true },
+    proposal: {
+      schemaVersion: 1,
+      client: { name: 'ООО Тест', phone: '+7', email: 'c@example.test' },
+      scenario: { segment: 'B2C', region: 'Москва', objectType: 'Квартира', tariff: 'Базовый', rent: false, baseMonthlyFee: 1990 },
+      items: [{ identity: 'ritm:1', system: 'ritm', systemLabel: 'Ритм', code: '1', name: 'Датчик', model: 'M', unit: 'шт.', quantity: 1, installedUnitPrice: 1000, sourceInstalledUnitPrice: 900, priceOverridden: true, sources: [{ workbook: 'secret.xls' }] }],
+      selectedOptionNames: ['SMS'], discountPercent: 5,
+      overrides: { monthlyFeeOverride: 1 }, exportMetadata: { generatedBy: 'internal' },
+      computed: {
+        equipment: { items: [{ system: 'ritm', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000, sourceInstalledUnitPrice: 900, lineTotal: 1000 }], subtotal: 1000, discountAmount: 50, afterDiscount: 950 },
+        installation: { calculated: 500, override: 400, final: 400, overridden: true },
+        oneTime: { final: 1350 }, monthlyFee: { calculated: 1990, override: 1800, final: 1800, overridden: true },
+        materialLiability: { calculated: 1000000, final: 1000000, overridden: false },
+        tariff: { requestedName: 'Базовый', resolvedName: 'Базовый', automaticChanges: [] },
+        selectedOptions: [], warnings: [{ code: 'SECRET', message: 'internal' }], exportGroups: [],
+      },
+    },
+  };
+  const output = ui.publicReportProjection(draft);
+  const json = JSON.stringify(output);
+  ['sourceInstalledUnitPrice', 'priceOverridden', 'sources', 'overrides', 'warnings', 'exportMetadata', 'identity', 'baseMonthlyFee', 'calculated', 'override', 'overridden', 'priority', 'internal'].forEach(key => assert.doesNotMatch(json, new RegExp(`"${key}"`), key));
+  assert.equal(output.proposal.items[0].installedUnitPrice, 1000);
+  assert.equal(output.proposal.computed.monthlyFee.final, 1800);
+  assert.equal(output.promotions[0].title, 'Акция');
+});
+
+test('editor preview renders actionable warnings while public report omits them', () => {
+  const render = loadReportRenderer();
+  const data = { proposal: { items: [{ quantity: 1 }], computed: { warnings: [{ message: '<b>Проверьте тариф</b>' }] } }, promotions: [], events: [] };
+  const preview = render(data, { editorPreview: true });
+  const publicHtml = render(data);
+  assert.match(preview, /rp-preview-warnings/);
+  assert.match(preview, /&lt;b&gt;Проверьте тариф&lt;\/b&gt;/);
+  assert.doesNotMatch(publicHtml, /Проверьте тариф|rp-preview-warnings/);
+});
+
+test('focus helpers preserve stable controls and choose a deterministic delete target', () => {
+  const ui = loadUi();
+  const items = [{ identity: 'a:1' }, { identity: 'b:2' }, { identity: 'c:3' }];
+  assert.equal(ui.nextFocusAfterDelete(items, 'b:2'), 'qty-input:c:3');
+  assert.equal(ui.nextFocusAfterDelete(items, 'c:3'), 'qty-input:b:2');
+  assert.equal(ui.nextFocusAfterDelete([{ identity: 'a:1' }], 'a:1'), 'equipmentSearch');
+  assert.match(fs.readFileSync('public/editor.js', 'utf8'), /data-focus-key/);
 });

@@ -103,6 +103,15 @@
     return html + '</section>';
   }
 
+  function previewWarnings(d, options) {
+    if (!options || !options.editorPreview) return '';
+    var warnings = d.proposal && d.proposal.computed && d.proposal.computed.warnings;
+    if (!Array.isArray(warnings) || !warnings.length) return '';
+    var html = '<aside class="rp-preview-warnings" aria-label="Предупреждения расчёта"><strong>Проверьте расчёт</strong>';
+    warnings.forEach(function (warning) { if (warning && has(warning.message)) html += '<p>' + esc(warning.message) + '</p>'; });
+    return html + '</aside>';
+  }
+
   function events(d) {
     var evs = (d.events || []).filter(function (e) {
       return has(e.signal) || has(e.date) || has(e.time) || has(e.address) || has(e.photo) || has(e.note);
@@ -148,7 +157,7 @@
       '<div class="rp-foot-disc">' + esc(disc) + '</div></div>' + mgr + '</div></div>';
   }
 
-  function renderReport(d) {
+  function renderReport(d, options) {
     d = d || {};
     var title = has(d.title) ? d.title : 'Отчёт о мониторинге';
     var head = '<div class="rp-head"><div class="rp-head-l">' +
@@ -166,7 +175,7 @@
     } else {
       block = card ? '<div class="rp-objwrap flow">' + card + '</div>' : '';
     }
-    return '<article class="report">' + head + block + stats(d) + proposal(d) + promotions(d) + events(d) + footer(d) + '</article>';
+    return '<article class="report">' + head + block + stats(d) + previewWarnings(d, options) + proposal(d) + promotions(d) + events(d) + footer(d) + '</article>';
   }
 
   global.renderReport = renderReport;

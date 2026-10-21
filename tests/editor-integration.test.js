@@ -37,6 +37,7 @@ function createEditorHarness(savedDraft) {
   const storage = new Map([['cesar_report_draft_v2', rawDraft]]);
   const renders = [];
   let fetchCalls = 0;
+  const fetchBodies = [];
   const document = {
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, new FakeElement());
@@ -61,7 +62,7 @@ function createEditorHarness(savedDraft) {
     clearTimeout() {},
     navigator: {},
     location: { origin: 'http://test.local' },
-    fetch() { fetchCalls += 1; throw new Error('unexpected fetch'); },
+    fetch(url, options) { fetchCalls += 1; fetchBodies.push(JSON.parse(options.body)); return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'report-1' }) }); },
   };
   context.window = context;
   context.globalThis = context;
@@ -71,7 +72,7 @@ function createEditorHarness(savedDraft) {
   vm.runInNewContext(fs.readFileSync('public/calculator.js', 'utf8'), context);
   context.renderReport = state => { renders.push(JSON.parse(JSON.stringify(state))); return ''; };
   vm.runInNewContext(fs.readFileSync('public/editor.js', 'utf8'), context);
-  return { elements, managerInput, cameraInput, storage, renders, fetchCalls: () => fetchCalls };
+  return { elements, managerInput, cameraInput, storage, renders, fetchBodies, fetchCalls: () => fetchCalls };
 }
 
 test('editor deep-merges an incomplete legacy draft and reset has independent defaults', () => {
@@ -128,4 +129,21 @@ test('future proposal schema blocks editor writes and preserves raw localStorage
   assert.equal(harness.storage.get('cesar_report_draft_v2'), raw);
   assert.equal(harness.fetchCalls(), 0);
   assert.equal(warning.hidden, false);
+});
+
+test('generate posts only the client-safe report projection', async () => {
+  const harness = createEditorHarness({
+    promotions: [], events: [],
+    proposal: {
+      client: { name: 'ООО Тест' },
+      items: [{ system: 'ritm', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000, sourceInstalledUnitPrice: 900, priceOverridden: true }],
+      overrides: { monthlyFeeOverride: 1 },
+    },
+  });
+  harness.elements.get('btnGenerate').click('click');
+  await new Promise(resolve => setImmediate(resolve));
+  const json = JSON.stringify(harness.fetchBodies[0]);
+  assert.equal(harness.fetchCalls(), 1);
+  ['sourceInstalledUnitPrice', 'priceOverridden', 'overrides', 'warnings', 'exportMetadata', 'identity'].forEach(key => assert.doesNotMatch(json, new RegExp(`"${key}"`)));
+  assert.match(json, /ООО Тест/);
 });
