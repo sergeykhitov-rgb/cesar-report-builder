@@ -9,6 +9,6 @@ const output = path.resolve(process.argv[2] || path.join(root, 'public/calculato
 const calculator = JSON.parse(fs.readFileSync(path.join(root, 'data/catalogs/calculator.json'), 'utf8'));
 const equipment = JSON.parse(fs.readFileSync(path.join(root, 'data/catalogs/equipment.json'), 'utf8'));
 const payload = { calculator, equipment };
-const source = 'window.CESAR_CALCULATOR_CATALOGS = Object.freeze(' + JSON.stringify(payload, null, 2) + ');\n';
+const source = '(function(){function f(value){Object.freeze(value);Object.keys(value).forEach(function(key){var nested=value[key];if(nested&&typeof nested==="object"&&!Object.isFrozen(nested))f(nested)});return value}window.CESAR_CALCULATOR_CATALOGS=f(' + JSON.stringify(payload) + ')})();\n';
 
 fs.writeFileSync(output, source);

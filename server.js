@@ -6,6 +6,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const PORT = process.env.PORT || 4600;
 const ROOT = __dirname;
@@ -33,11 +34,30 @@ function sendJSON(res, code, obj) {
 function safeId(id) { return /^[a-zA-Z0-9_-]{4,40}$/.test(id) ? id : null; }
 function genId() { return crypto.randomBytes(6).toString('hex'); }
 
-function serveFile(res, file) {
-  fs.readFile(file, function (err, data) {
-    if (err) { send(res, 404, 'Not found'); return; }
-    var ext = path.extname(file).toLowerCase();
-    send(res, 200, data, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+function serveFile(req, res, file) {
+  fs.stat(file, function (statError, stat) {
+    if (statError || !stat.isFile()) { send(res, 404, 'Not found'); return; }
+    fs.readFile(file, function (readError, data) {
+      if (readError) { send(res, 404, 'Not found'); return; }
+      var ext = path.extname(file).toLowerCase();
+      var isHTML = ext === '.html';
+      var headers = {
+        'Content-Type': MIME[ext] || 'application/octet-stream',
+        'Cache-Control': isHTML ? 'no-store' : 'public, max-age=3600',
+        'Last-Modified': stat.mtime.toUTCString()
+      };
+      var acceptsGzip = /(?:^|,)\s*gzip\s*(?:;|,|$)/i.test(req.headers['accept-encoding'] || '');
+      if ((ext === '.js' || ext === '.json') && acceptsGzip) {
+        headers['Content-Encoding'] = 'gzip';
+        headers.Vary = 'Accept-Encoding';
+        zlib.gzip(data, function (gzipError, compressed) {
+          if (gzipError) { send(res, 500, 'Compression failed'); return; }
+          send(res, 200, compressed, headers);
+        });
+        return;
+      }
+      send(res, 200, data, headers);
+    });
   });
 }
 
@@ -106,7 +126,7 @@ const server = http.createServer(function (req, res) {
 
   // --- публичная страница отчёта /r/<id> ---
   if (req.method === 'GET' && /^\/r\/[^/]+$/.test(pathname)) {
-    return serveFile(res, path.join(PUB, 'report.html'));
+    return serveFile(req, res, path.join(PUB, 'report.html'));
   }
 
   // --- статика ---
@@ -115,9 +135,9 @@ const server = http.createServer(function (req, res) {
     var filePath = path.normalize(path.join(PUB, rel));
     if (filePath.indexOf(PUB) !== 0) { send(res, 403, 'Forbidden'); return; }
     fs.stat(filePath, function (err, st) {
-      if (!err && st.isFile()) return serveFile(res, filePath);
+      if (!err && st.isFile()) return serveFile(req, res, filePath);
       // фолбэк на index
-      serveFile(res, path.join(PUB, 'index.html'));
+      serveFile(req, res, path.join(PUB, 'index.html'));
     });
     return;
   }

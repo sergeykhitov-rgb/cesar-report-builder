@@ -38,12 +38,20 @@
     draft.events = [];
     return recalculateProposal(draft);
   }
+  function mergeSavedDraft(saved) {
+    var source = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+    var draft = Object.assign(JSON.parse(JSON.stringify(DEFAULT)), source);
+    draft.object = Object.assign({}, DEFAULT.object, source.object && typeof source.object === 'object' && !Array.isArray(source.object) ? source.object : {});
+    draft.summary = Object.assign({}, DEFAULT.summary, source.summary && typeof source.summary === 'object' && !Array.isArray(source.summary) ? source.summary : {});
+    draft.manager = Object.assign({}, DEFAULT.manager, source.manager && typeof source.manager === 'object' && !Array.isArray(source.manager) ? source.manager : {});
+    return draft;
+  }
   function load() {
     try {
       var raw = localStorage.getItem(LS_KEY);
       if (raw) {
         var saved = JSON.parse(raw);
-        var draft = Object.assign({}, DEFAULT, saved && typeof saved === 'object' ? saved : {});
+        var draft = mergeSavedDraft(saved);
         if (!Array.isArray(draft.events)) draft.events = [];
         return recalculateProposal(window.CesarProposalState.ensureDraft(draft, { isNewDraft: false }));
       }

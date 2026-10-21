@@ -66,6 +66,13 @@
     return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
   }
 
+  function finiteNumericInputOr(value, fallback) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+    if (typeof value !== 'string' || value.trim() === '') return fallback;
+    var numeric = Number(value.trim());
+    return Number.isFinite(numeric) ? numeric : fallback;
+  }
+
   function sanitizeClient(value) {
     var source = isPlainObject(value) ? value : {};
     return {
@@ -111,10 +118,10 @@
   function sanitizeCounts(value) {
     var source = isPlainObject(value) ? value : {};
     return {
-      cameraCount: finiteNumberOr(source.cameraCount, 0),
-      additionalHouseholdSensors: finiteNumberOr(source.additionalHouseholdSensors, 0),
-      additionalSecuritySensors: finiteNumberOr(source.additionalSecuritySensors, 0),
-      baseSecuritySensorCount: finiteNumberOr(source.baseSecuritySensorCount, 0)
+      cameraCount: finiteNumericInputOr(source.cameraCount, 0),
+      additionalHouseholdSensors: finiteNumericInputOr(source.additionalHouseholdSensors, 0),
+      additionalSecuritySensors: finiteNumericInputOr(source.additionalSecuritySensors, 0),
+      baseSecuritySensorCount: finiteNumericInputOr(source.baseSecuritySensorCount, 0)
     };
   }
 
@@ -156,12 +163,15 @@
 
   function normalizeProposal(proposal) {
     var source = isRecord(proposal) ? proposal : {};
+    if (typeof source.schemaVersion === 'number' && source.schemaVersion > SCHEMA_VERSION) {
+      throw new RangeError('Unsupported proposal schema version: ' + source.schemaVersion);
+    }
     var normalized = createDefaultProposal();
     normalized.client = sanitizeClient(source.client);
     normalized.scenario = sanitizeScenario(source.scenario);
     normalized.items = Array.isArray(source.items) ? source.items.map(sanitizeItem).filter(Boolean) : [];
     normalized.selectedOptionNames = sanitizeOptionNames(source.selectedOptionNames);
-    normalized.discountPercent = finiteNumberOr(source.discountPercent, 0);
+    normalized.discountPercent = finiteNumericInputOr(source.discountPercent, 0);
     normalized.counts = sanitizeCounts(source.counts);
     normalized.overrides = sanitizeOverrides(source.overrides);
     normalized.computed = safeComputed(source.computed);

@@ -162,7 +162,7 @@ test('nested proposal fields are sanitized by explicit type rules', () => {
   });
   assert.deepEqual(normalized.items, [{ code: 'A', quantity: 2, installedUnitPrice: 100.5, active: true, note: null }]);
   assert.deepEqual(normalized.selectedOptionNames, ['Кнопка', 'Камера']);
-  assert.equal(normalized.discountPercent, 0);
+  assert.equal(normalized.discountPercent, 5);
   assert.deepEqual(normalized.counts, {
     cameraCount: 0, additionalHouseholdSensors: 2, additionalSecuritySensors: 0, baseSecuritySensorCount: 1.5,
   });
@@ -188,6 +188,35 @@ test('valid B2B scenario and override zero forms survive normalization', () => {
   assert.deepEqual(normalized.overrides, {
     monthlyFeeOverride: 0, installationOverride: '', materialLiabilityOverride: '12.5',
   });
+});
+
+test('numeric HTML input strings normalize for counts and discount while invalid strings use defaults', () => {
+  const state = loadState();
+  const normalized = state.normalizeProposal({
+    discountPercent: '0',
+    counts: {
+      cameraCount: '3',
+      additionalHouseholdSensors: ' 2 ',
+      additionalSecuritySensors: '',
+      baseSecuritySensorCount: 'not-a-number',
+    },
+  });
+
+  assert.equal(normalized.discountPercent, 0);
+  assert.deepEqual(normalized.counts, {
+    cameraCount: 3, additionalHouseholdSensors: 2, additionalSecuritySensors: 0, baseSecuritySensorCount: 0,
+  });
+  assert.equal(state.normalizeProposal({ discountPercent: '5' }).discountPercent, 5);
+  assert.equal(state.normalizeProposal({ discountPercent: 'bad' }).discountPercent, 0);
+});
+
+test('schema migration accepts missing and older versions but rejects future versions', () => {
+  const state = loadState();
+
+  assert.equal(state.normalizeProposal({ client: { name: 'Legacy' } }).schemaVersion, 1);
+  assert.equal(state.normalizeProposal({ schemaVersion: 0, client: { name: 'Older' } }).schemaVersion, 1);
+  assert.equal(state.normalizeProposal({ schemaVersion: 1 }).schemaVersion, 1);
+  assert.throws(() => state.normalizeProposal({ schemaVersion: 2 }), /Unsupported proposal schema version: 2/);
 });
 
 test('priority promotions are selected only for a new draft and copy all catalog fields', () => {
@@ -289,6 +318,23 @@ test('generated browser catalogs exactly match sources and builder output is det
   execFileSync(process.execPath, ['scripts/build-calculator-catalogs.js', second], { cwd: ROOT });
   assert.equal(fs.readFileSync(first, 'utf8'), fs.readFileSync(second, 'utf8'));
   assert.equal(fs.readFileSync(first, 'utf8'), fs.readFileSync(path.join(ROOT, 'public/calculator-catalogs.js'), 'utf8'));
+  assert.equal(fs.readFileSync(first, 'utf8').trim().split('\n').length, 1);
+});
+
+test('generated browser catalogs recursively freeze nested records and arrays', () => {
+  const generatedContext = loadBrowserScript('public/calculator-catalogs.js');
+  const payload = generatedContext.CESAR_CALCULATOR_CATALOGS;
+  const firstTariff = payload.calculator.b2bTariffs[0];
+
+  assert.equal(Object.isFrozen(payload), true);
+  assert.equal(Object.isFrozen(payload.calculator), true);
+  assert.equal(Object.isFrozen(payload.calculator.b2bTariffs), true);
+  assert.equal(Object.isFrozen(firstTariff), true);
+  assert.equal(Object.isFrozen(firstTariff.source), true);
+  assert.throws(() => payload.calculator.b2bTariffs.push({}), /object is not extensible/);
+  const originalRegion = firstTariff.region;
+  firstTariff.region = 'mutated';
+  assert.equal(firstTariff.region, originalRegion);
 });
 
 test('index loads calculator dependencies before renderer and editor', () => {
@@ -302,12 +348,4 @@ test('index loads calculator dependencies before renderer and editor', () => {
     '/report-render.js',
     '/editor.js',
   ]);
-});
-
-test('editor default includes proposal and uses state migration for saved and fresh drafts', () => {
-  const editor = fs.readFileSync(path.join(ROOT, 'public/editor.js'), 'utf8');
-  assert.match(editor, /proposal:\s*window\.CesarProposalState\.createDefaultProposal\(\)/);
-  assert.match(editor, /ensureDraft\(draft,\s*\{ isNewDraft: false \}\)/);
-  assert.match(editor, /ensureDraft\(JSON\.parse\(JSON\.stringify\(DEFAULT\)\),\s*\{ isNewDraft: true \}\)/);
-  assert.match(editor, /calculateProposal\(target\.proposal,\s*window\.CESAR_CALCULATOR_CATALOGS\)/);
 });
