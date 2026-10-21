@@ -164,7 +164,10 @@
   function normalizeProposal(proposal) {
     var source = isRecord(proposal) ? proposal : {};
     if (typeof source.schemaVersion === 'number' && source.schemaVersion > SCHEMA_VERSION) {
-      throw new RangeError('Unsupported proposal schema version: ' + source.schemaVersion);
+      var versionError = new RangeError('Unsupported proposal schema version: ' + source.schemaVersion);
+      versionError.code = 'UNSUPPORTED_PROPOSAL_SCHEMA';
+      versionError.supportedVersion = SCHEMA_VERSION;
+      throw versionError;
     }
     var normalized = createDefaultProposal();
     normalized.client = sanitizeClient(source.client);

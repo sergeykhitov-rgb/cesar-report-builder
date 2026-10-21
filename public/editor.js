@@ -3,6 +3,8 @@
   'use strict';
   var LS_KEY = 'cesar_report_draft_v2';
   var DEFAULT_HERO = '/hero-default.jpg';
+  var editorBlocked = false;
+  var editorBlockMessage = '';
 
   var DEFAULT = {
     title: 'Отчёт о мониторинге автомобиля',
@@ -47,19 +49,28 @@
     return draft;
   }
   function load() {
+    var raw, saved;
     try {
-      var raw = localStorage.getItem(LS_KEY);
-      if (raw) {
-        var saved = JSON.parse(raw);
-        var draft = mergeSavedDraft(saved);
-        if (!Array.isArray(draft.events)) draft.events = [];
-        return recalculateProposal(window.CesarProposalState.ensureDraft(draft, { isNewDraft: false }));
+      raw = localStorage.getItem(LS_KEY);
+      if (!raw) return freshDraft();
+      saved = JSON.parse(raw);
+    } catch (e) { return freshDraft(); }
+    try {
+      var draft = mergeSavedDraft(saved);
+      if (!Array.isArray(draft.events)) draft.events = [];
+      return recalculateProposal(window.CesarProposalState.ensureDraft(draft, { isNewDraft: false }));
+    } catch (e) {
+      if (e && e.code === 'UNSUPPORTED_PROPOSAL_SCHEMA') {
+        editorBlocked = true;
+        editorBlockMessage = 'Этот черновик создан в более новой версии. Обновите приложение, чтобы открыть его. Данные сохранены без изменений.';
+        return mergeSavedDraft(saved);
       }
-    } catch (e) {}
+    }
     return freshDraft();
   }
   var saveTimer;
   function save() {
+    if (editorBlocked) { showBlockedWarning(); return; }
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
       try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {}
@@ -127,6 +138,7 @@
       var val = getPath(state, path);
       if (val != null) el.value = val;
       el.addEventListener('input', function () {
+        if (editorBlocked) { el.value = getPath(state, path) == null ? '' : getPath(state, path); showBlockedWarning(); return; }
         setPath(state, path, el.value);
         if (path.indexOf('proposal.') === 0) recalculateProposal();
         save(); render();
@@ -318,6 +330,7 @@
   var btnGen = document.getElementById('btnGenerate');
 
   btnGen.addEventListener('click', function () {
+    if (editorBlocked) { showBlockedWarning(); return; }
     var orig = btnGen.textContent;
     btnGen.disabled = true; btnGen.textContent = 'Публикуем…';
     fetch('/api/reports', {
@@ -350,6 +363,7 @@
 
   /* ---------- прочее ---------- */
   document.getElementById('btnReset').addEventListener('click', function () {
+    if (editorBlocked) { showBlockedWarning(); return; }
     if (!confirm('Очистить все поля отчёта?')) return;
     state = freshDraft();
     save(); rebindAll();
@@ -360,6 +374,11 @@
   document.getElementById('btnClosePreview').addEventListener('click', function () { panePreview.classList.remove('open'); });
 
   var toastEl = document.getElementById('toast'), toastTimer;
+  function showBlockedWarning() {
+    if (!editorBlocked || !toastEl) return;
+    toastEl.textContent = editorBlockMessage;
+    toastEl.hidden = false;
+  }
   function toast(msg) {
     toastEl.textContent = msg; toastEl.hidden = false;
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { toastEl.hidden = true; }, 2200);
@@ -378,4 +397,5 @@
   renderPromotions();
   renderEvents();
   render();
+  showBlockedWarning();
 })();

@@ -60,6 +60,37 @@ test('static JavaScript is gzip-compressed and publicly cacheable with validatio
   assert.match(decoded, /^\(function\(\)/);
 });
 
+test('If-Modified-Since returns 304 without a response body at HTTP-date precision', async t => {
+  const port = await startServer(t);
+  const first = await request(port, '/calculator-catalogs.js');
+  const response = await request(port, '/calculator-catalogs.js', { 'If-Modified-Since': first.headers['last-modified'] });
+
+  assert.equal(first.status, 200);
+  assert.ok(first.headers['last-modified']);
+  assert.equal(response.status, 304);
+  assert.equal(response.body.length, 0);
+  assert.match(response.headers['cache-control'], /^public, max-age=/);
+});
+
+test('explicit gzip q=0 prevents compression even when wildcard allows other encodings', async t => {
+  const port = await startServer(t);
+  const response = await request(port, '/calculator-catalogs.js', { 'Accept-Encoding': 'br;q=1, *;q=0.8, gzip;q=0' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-encoding'], undefined);
+  assert.match(response.headers.vary, /Accept-Encoding/i);
+  assert.match(response.body.toString('utf8'), /^\(function\(\)/);
+});
+
+test('wildcard Accept-Encoding enables gzip when gzip has no explicit quality', async t => {
+  const port = await startServer(t);
+  const response = await request(port, '/calculator-catalogs.js', { 'Accept-Encoding': 'br;q=1, *;q=0.5' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-encoding'], 'gzip');
+  assert.match(zlib.gunzipSync(response.body).toString('utf8'), /^\(function\(\)/);
+});
+
 test('HTML remains no-store and is not gzip-compressed by static JS/JSON policy', async t => {
   const port = await startServer(t);
   const response = await request(port, '/', { 'Accept-Encoding': 'gzip' });

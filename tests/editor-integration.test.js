@@ -33,8 +33,10 @@ function createEditorHarness(savedDraft) {
   const managerInput = new FakeElement({ 'data-path': 'manager.name' });
   const cameraInput = new FakeElement({ 'data-path': 'proposal.counts.cameraCount' });
   const pathInputs = [managerInput, cameraInput];
-  const storage = new Map([['cesar_report_draft_v2', JSON.stringify(savedDraft)]]);
+  const rawDraft = typeof savedDraft === 'string' ? savedDraft : JSON.stringify(savedDraft);
+  const storage = new Map([['cesar_report_draft_v2', rawDraft]]);
   const renders = [];
+  let fetchCalls = 0;
   const document = {
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, new FakeElement());
@@ -59,7 +61,7 @@ function createEditorHarness(savedDraft) {
     clearTimeout() {},
     navigator: {},
     location: { origin: 'http://test.local' },
-    fetch() { throw new Error('unexpected fetch'); },
+    fetch() { fetchCalls += 1; throw new Error('unexpected fetch'); },
   };
   context.window = context;
   context.globalThis = context;
@@ -69,7 +71,7 @@ function createEditorHarness(savedDraft) {
   vm.runInNewContext(fs.readFileSync('public/calculator.js', 'utf8'), context);
   context.renderReport = state => { renders.push(JSON.parse(JSON.stringify(state))); return ''; };
   vm.runInNewContext(fs.readFileSync('public/editor.js', 'utf8'), context);
-  return { elements, managerInput, cameraInput, storage, renders };
+  return { elements, managerInput, cameraInput, storage, renders, fetchCalls: () => fetchCalls };
 }
 
 test('editor deep-merges an incomplete legacy draft and reset has independent defaults', () => {
@@ -107,4 +109,23 @@ test('editor input-path mutation recalculates and saves normalized proposal stat
   assert.equal(saved.proposal.counts.cameraCount, 3);
   assert.equal(saved.proposal.computed.tariff.resolvedName, 'Видео Базовый');
   assert.equal(saved.proposal.computed.monthlyFee.final, 2800);
+});
+
+test('future proposal schema blocks editor writes and preserves raw localStorage byte-for-byte', () => {
+  const raw = '{"title":"Future draft","proposal":{"schemaVersion":2,"client":{"name":"Keep me"}},"promotions":[],"events":[]}';
+  const harness = createEditorHarness(raw);
+  const warning = harness.elements.get('toast');
+
+  assert.equal(warning.hidden, false);
+  assert.match(warning.textContent, /более новой версии/i);
+  assert.match(warning.textContent, /обновите/i);
+
+  harness.managerInput.value = 'Attempted mutation';
+  harness.managerInput.click('input');
+  harness.elements.get('btnReset').click('click');
+  harness.elements.get('btnGenerate').click('click');
+
+  assert.equal(harness.storage.get('cesar_report_draft_v2'), raw);
+  assert.equal(harness.fetchCalls(), 0);
+  assert.equal(warning.hidden, false);
 });

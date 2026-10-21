@@ -216,7 +216,10 @@ test('schema migration accepts missing and older versions but rejects future ver
   assert.equal(state.normalizeProposal({ client: { name: 'Legacy' } }).schemaVersion, 1);
   assert.equal(state.normalizeProposal({ schemaVersion: 0, client: { name: 'Older' } }).schemaVersion, 1);
   assert.equal(state.normalizeProposal({ schemaVersion: 1 }).schemaVersion, 1);
-  assert.throws(() => state.normalizeProposal({ schemaVersion: 2 }), /Unsupported proposal schema version: 2/);
+  assert.throws(
+    () => state.normalizeProposal({ schemaVersion: 2 }),
+    error => error.code === 'UNSUPPORTED_PROPOSAL_SCHEMA' && /Unsupported proposal schema version: 2/.test(error.message)
+  );
 });
 
 test('priority promotions are selected only for a new draft and copy all catalog fields', () => {

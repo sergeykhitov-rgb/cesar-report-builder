@@ -34,22 +34,48 @@ function sendJSON(res, code, obj) {
 function safeId(id) { return /^[a-zA-Z0-9_-]{4,40}$/.test(id) ? id : null; }
 function genId() { return crypto.randomBytes(6).toString('hex'); }
 
+function encodingQuality(header, encoding) {
+  var explicit = null, wildcard = null;
+  String(header || '').split(',').forEach(function (entry) {
+    var parts = entry.trim().split(';');
+    var name = parts.shift().trim().toLowerCase();
+    if (!name) return;
+    var quality = 1;
+    parts.forEach(function (parameter) {
+      var match = /^\s*q\s*=\s*([^\s]+)\s*$/i.exec(parameter);
+      if (!match) return;
+      var parsed = Number(match[1]);
+      quality = Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0;
+    });
+    if (name === encoding) explicit = quality;
+    else if (name === '*') wildcard = quality;
+  });
+  return explicit !== null ? explicit : (wildcard !== null ? wildcard : 0);
+}
+
 function serveFile(req, res, file) {
   fs.stat(file, function (statError, stat) {
     if (statError || !stat.isFile()) { send(res, 404, 'Not found'); return; }
+    var ext = path.extname(file).toLowerCase();
+    var isHTML = ext === '.html';
+    var compressible = ext === '.js' || ext === '.json';
+    var headers = {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': isHTML ? 'no-store' : 'public, max-age=3600',
+      'Last-Modified': stat.mtime.toUTCString()
+    };
+    if (compressible) headers.Vary = 'Accept-Encoding';
+    var modifiedSince = Date.parse(req.headers['if-modified-since'] || '');
+    var mtimeAtHeaderPrecision = Math.floor(stat.mtimeMs / 1000) * 1000;
+    if (!isHTML && Number.isFinite(modifiedSince) && mtimeAtHeaderPrecision <= modifiedSince) {
+      send(res, 304, null, headers);
+      return;
+    }
     fs.readFile(file, function (readError, data) {
       if (readError) { send(res, 404, 'Not found'); return; }
-      var ext = path.extname(file).toLowerCase();
-      var isHTML = ext === '.html';
-      var headers = {
-        'Content-Type': MIME[ext] || 'application/octet-stream',
-        'Cache-Control': isHTML ? 'no-store' : 'public, max-age=3600',
-        'Last-Modified': stat.mtime.toUTCString()
-      };
-      var acceptsGzip = /(?:^|,)\s*gzip\s*(?:;|,|$)/i.test(req.headers['accept-encoding'] || '');
+      var acceptsGzip = encodingQuality(req.headers['accept-encoding'], 'gzip') > 0;
       if ((ext === '.js' || ext === '.json') && acceptsGzip) {
         headers['Content-Encoding'] = 'gzip';
-        headers.Vary = 'Accept-Encoding';
         zlib.gzip(data, function (gzipError, compressed) {
           if (gzipError) { send(res, 500, 'Compression failed'); return; }
           send(res, 200, compressed, headers);
