@@ -132,3 +132,9 @@ test('import manifest records all source workbooks with hashes and sheet names',
   assert.equal(manifest.deterministic, true);
   assert.ok(!('generatedAt' in manifest));
 });
+
+test('calculator importer dependencies are pinned', () => {
+  const requirements = fs.readFileSync('requirements-calculator-import.txt', 'utf8');
+  assert.match(requirements, /^openpyxl==\d+\.\d+\.\d+$/m);
+  assert.match(requirements, /^xlrd==\d+\.\d+\.\d+$/m);
+});

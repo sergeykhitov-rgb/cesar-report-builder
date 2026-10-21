@@ -7,7 +7,9 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -23,6 +25,18 @@ SYSTEM_LABELS = {
     "other": "Другое",
 }
 STOCK_SHEETS = {"13.08.26", "13.08.26 2725"}
+REVIEWED_NON_PRICE_EQUIPMENT = {
+    ("103367", "Блок питания 12В 1.5А, FE-12/15 mini,", "Для реле слаботочного"),
+    ("50663", "Кабель электропитания 2*0.75мм, ШВВП - 1м", "Для извещателя утечки газа"),
+    ("50663", "Кабель электропитания 2*0.75мм, ШВВП - 3м", "Для реле и выключателя"),
+    ("50663", "Кабель электропитания 2*0.75мм, ШВВП - 3м", "Для реле слаботочного и силового"),
+    ("5211", "Аккумулятор 12V/1,2 А/ч", "Для НОРД GSM/WRL"),
+    ("5211", "Аккумулятор 12V/1,2 А/ч", "Для Mega Light 433"),
+    ("60725", "Клеммник соединит. WAGO 222-413/CU 3BX - 2шт", "Для реле и выключателя"),
+    ("60725", "Клеммник соединит. WAGO 222-413/CU 3BX - 2шт", "Для реле слаботочного и силового"),
+    ("96937", "Шнур ШВВП с плоской вилкой", "Для Mega Light 434"),
+    ("96937", "Шнур ШВВП с плоской вилкой", "Для сирены"),
+}
 
 # These inventory codes describe the same sellable item in several specification
 # sheets, but the workbook editors used annotations or omitted a model in some
@@ -117,22 +131,43 @@ def normalize_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
-def normalize_number(value: Any, *, allow_none: bool = False) -> int | float | None:
+def format_source(source: dict[str, Any] | None, field: str) -> str:
+    if not source:
+        return field
+    return (
+        f"{source.get('workbook', '<unknown workbook>')} / "
+        f"{source.get('sheet', '<unknown sheet>')} row {source.get('row', '<unknown>')} / {field}"
+    )
+
+
+def normalize_number(
+    value: Any,
+    *,
+    allow_none: bool = False,
+    source: dict[str, Any] | None = None,
+    field: str = "value",
+) -> int | float | None:
     if value is None or normalize_text(value) == "":
         if allow_none:
             return None
-        raise ValueError("numeric value is blank")
+        raise ValueError(f"numeric value is blank at {format_source(source, field)}")
     if isinstance(value, str):
-        value = value.replace("\u00a0", "").replace(" ", "").replace(",", ".")
-        value = re.sub(r"[^0-9.\-]", "", value)
+        text = value.replace("\u00a0", " ").strip()
+        if not re.fullmatch(r"[+-]?(?:\d{1,3}(?:[ ]\d{3})+|\d+)(?:[.,]\d+)?", text):
+            raise ValueError(
+                f"invalid numeric value {value!r} at {format_source(source, field)}"
+            )
+        value = text.replace(" ", "").replace(",", ".")
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        if allow_none:
-            return None
-        raise ValueError(f"not a numeric value: {value!r}") from exc
+        raise ValueError(
+            f"invalid numeric value {value!r} at {format_source(source, field)}"
+        ) from exc
     if not math.isfinite(number):
-        raise ValueError(f"non-finite numeric value: {value!r}")
+        raise ValueError(
+            f"non-finite numeric value {value!r} at {format_source(source, field)}"
+        )
     return int(number) if number.is_integer() else number
 
 
@@ -141,6 +176,10 @@ def normalize_code(value: Any) -> str:
         return str(int(value))
     text = normalize_text(value)
     return text[:-2] if re.fullmatch(r"\d+\.0", text) else text
+
+
+def is_reviewed_non_price_equipment(code: str, name: str, value: Any) -> bool:
+    return (code, normalize_text(name), normalize_text(value)) in REVIEWED_NON_PRICE_EQUIPMENT
 
 
 def source_ref(workbook: Path, sheet: str, row: int) -> dict[str, Any]:
@@ -199,7 +238,9 @@ def read_calculator_reference(reference_path: Path) -> dict[str, Any]:
             "objectType": normalize_text(values[2]),
             "name": normalize_text(values[3]),
             "code": normalize_code(values[4]),
-            "monthlyPrice": normalize_number(values[5]),
+            "monthlyPrice": normalize_number(
+                values[5], source=source_ref(reference_path, "B2C_Тарифы1", row_number), field="monthly price"
+            ),
             "hasVideo": normalize_text(values[6]).lower() == "да",
             "hasHouseholdSensors": normalize_text(values[7]).lower() == "да",
             "hasExtendedLiability": normalize_text(values[8]).lower() == "да",
@@ -218,7 +259,9 @@ def read_calculator_reference(reference_path: Path) -> dict[str, Any]:
             "objectType": normalize_text(values[2]),
             "name": normalize_text(values[3]),
             "code": normalize_code(values[4]),
-            "monthlyPrice": normalize_number(values[5]),
+            "monthlyPrice": normalize_number(
+                values[5], source=source_ref(reference_path, "B2C_Аренда", row_number), field="monthly price"
+            ),
             "source": source_ref(reference_path, "B2C_Аренда", row_number),
         })
 
@@ -232,7 +275,9 @@ def read_calculator_reference(reference_path: Path) -> dict[str, Any]:
             "priceLevel": normalize_text(values[2]),
             "name": normalize_text(values[3]),
             "contents": normalize_text(values[4]),
-            "monthlyPrice": normalize_number(values[5]),
+            "monthlyPrice": normalize_number(
+                values[5], source=source_ref(reference_path, "B2B_Тарифы", row_number), field="monthly price"
+            ),
             "rental": normalize_text(values[6]).lower() == "да",
             "source": source_ref(reference_path, "B2B_Тарифы", row_number),
         })
@@ -242,7 +287,13 @@ def read_calculator_reference(reference_path: Path) -> dict[str, Any]:
         name = normalize_text(values[1] if len(values) > 1 else None)
         if not name:
             continue
-        price = normalize_number(values[3], allow_none=True)
+        raw_price = normalize_text(values[3])
+        price = None if raw_price.casefold() == "индивидуально" else normalize_number(
+            values[3],
+            allow_none=True,
+            source=source_ref(reference_path, "Опции", row_number),
+            field="monthly price",
+        )
         options.append({
             "category": normalize_text(values[0]),
             "name": name,
@@ -262,7 +313,11 @@ def read_calculator_reference(reference_path: Path) -> dict[str, Any]:
         category = normalize_text(values[0]).lower()
         object_label = normalize_text(values[1])
         level_label = normalize_text(values[2])
-        amount = normalize_number(values[3])
+        amount = normalize_number(
+            values[3],
+            source=source_ref(reference_path, "Мат_ответственность", row_number),
+            field="amount",
+        )
         object_id = object_ids[object_label.lower()]
         level_id = level_ids[level_label.lower()]
         segment_id = category.lower()
@@ -281,7 +336,11 @@ def read_calculator_reference(reference_path: Path) -> dict[str, Any]:
         label = normalize_text(values[0] if values else None)
         if not label:
             continue
-        value = normalize_number(values[0], allow_none=True)
+        value = None if label.casefold() == "индивидуальная скидка" else normalize_number(
+            values[0],
+            source=source_ref(reference_path, "Скидки", row_number),
+            field="discount percent",
+        )
         discounts.append({
             "percent": value,
             "kind": "standard" if value is not None else "individual",
@@ -334,54 +393,144 @@ def system_for_sheet(sheet: str) -> str:
     return "other"
 
 
-def find_specification_header(sheet: Any) -> int | None:
-    for row_index in range(sheet.nrows):
-        values = [normalize_text(value).casefold() for value in sheet.row_values(row_index)]
-        if "код" in values and any("наименование оборудования" in value for value in values):
-            return row_index
+EQUIPMENT_HEADER_ALIASES = {
+    "code": {"код", "код оборудования"},
+    "name": {"наименование", "наименование оборудования"},
+    "model": {"модель"},
+    "unit": {"ед изм", "единица измерения"},
+    "quantity": {"кол во", "количество"},
+    "installed_price": {
+        "цена оборудования с установкой за единицу руб с ндс",
+        "цена с установкой за единицу",
+    },
+}
+
+
+def normalize_header(value: Any) -> str:
+    return re.sub(r"[^0-9a-zа-яё]+", " ", normalize_text(value).casefold()).strip()
+
+
+def build_equipment_header_map(
+    headers: Iterable[Any],
+    source: dict[str, Any],
+) -> dict[str, int]:
+    matches: dict[str, list[int]] = {field: [] for field in EQUIPMENT_HEADER_ALIASES}
+    for index, value in enumerate(headers):
+        normalized = normalize_header(value)
+        for field, aliases in EQUIPMENT_HEADER_ALIASES.items():
+            if normalized in aliases:
+                matches[field].append(index)
+    missing = [field for field, indices in matches.items() if not indices]
+    duplicates = [field for field, indices in matches.items() if len(indices) > 1]
+    if missing or duplicates:
+        details = []
+        if missing:
+            details.append("missing columns: " + ", ".join(missing))
+        if duplicates:
+            details.append("duplicate columns: " + ", ".join(duplicates))
+        raise ValueError(
+            f"invalid equipment header at {format_source(source, 'header')}: {'; '.join(details)}"
+        )
+    return {field: indices[0] for field, indices in matches.items()}
+
+
+def read_tabular_workbook(workbook_path: Path) -> tuple[list[str], dict[str, list[list[Any]]]]:
+    if workbook_path.suffix.casefold() == ".xlsx":
+        workbook = load_workbook(workbook_path, data_only=True, read_only=True)
+        names = list(workbook.sheetnames)
+        tables = {
+            sheet.title: [list(row) for row in sheet.iter_rows(values_only=True)]
+            for sheet in workbook.worksheets
+        }
+        workbook.close()
+        return names, tables
+    workbook = xlrd.open_workbook(workbook_path, on_demand=True)
+    names = workbook.sheet_names()
+    tables = {
+        name: [workbook.sheet_by_name(name).row_values(index) for index in range(workbook.sheet_by_name(name).nrows)]
+        for name in names
+    }
+    workbook.release_resources()
+    return names, tables
+
+
+def find_specification_header(
+    workbook_path: Path,
+    sheet_name: str,
+    rows: list[list[Any]],
+) -> tuple[int, dict[str, int]] | None:
+    recognized = set().union(*EQUIPMENT_HEADER_ALIASES.values())
+    for row_index, values in enumerate(rows):
+        normalized = [normalize_header(value) for value in values]
+        if "код" in normalized and any(value in EQUIPMENT_HEADER_ALIASES["name"] for value in normalized):
+            source = source_ref(workbook_path, sheet_name, row_index + 1)
+            return row_index, build_equipment_header_map(values, source)
+        if len([value for value in normalized if value in recognized]) >= 4:
+            source = source_ref(workbook_path, sheet_name, row_index + 1)
+            return row_index, build_equipment_header_map(values, source)
     return None
 
 
+def is_repeated_equipment_header(values: list[Any], columns: dict[str, int]) -> bool:
+    return (
+        len(values) > columns["code"]
+        and len(values) > columns["name"]
+        and normalize_header(values[columns["code"]]) in EQUIPMENT_HEADER_ALIASES["code"]
+        and normalize_header(values[columns["name"]]) in EQUIPMENT_HEADER_ALIASES["name"]
+    )
+
+
 def read_equipment_rows(workbook_path: Path) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    workbook = xlrd.open_workbook(workbook_path, on_demand=True)
+    sheet_names, tables = read_tabular_workbook(workbook_path)
     rows: list[dict[str, Any]] = []
     sheet_counts: dict[str, int] = {}
-    for sheet_name in workbook.sheet_names():
+    for sheet_name in sheet_names:
         if sheet_name in STOCK_SHEETS:
             continue
-        sheet = workbook.sheet_by_name(sheet_name)
-        header_index = find_specification_header(sheet)
-        if header_index is None:
+        sheet_rows = tables[sheet_name]
+        header = find_specification_header(workbook_path, sheet_name, sheet_rows)
+        if header is None:
             continue
+        header_index, columns = header
         count = 0
-        for row_index in range(header_index + 1, sheet.nrows):
-            values = sheet.row_values(row_index)
-            code = normalize_code(values[1] if len(values) > 1 else None)
-            name = normalize_text(values[2] if len(values) > 2 else None)
+        for row_index, values in enumerate(sheet_rows[header_index + 1:], header_index + 1):
+            if is_repeated_equipment_header(values, columns):
+                continue
+            source = source_ref(workbook_path, sheet_name, row_index + 1)
+            code = normalize_code(values[columns["code"]] if len(values) > columns["code"] else None)
+            name = normalize_text(values[columns["name"]] if len(values) > columns["name"] else None)
             if not code or not name:
                 continue
-            price = normalize_number(values[6] if len(values) > 6 else None, allow_none=True)
+            raw_price = values[columns["installed_price"]] if len(values) > columns["installed_price"] else None
+            if is_reviewed_non_price_equipment(code, name, raw_price):
+                continue
+            price = normalize_number(
+                raw_price,
+                allow_none=True,
+                source=source,
+                field="installed price",
+            )
             if price is None:
                 continue
+            model = normalize_text(values[columns["model"]] if len(values) > columns["model"] else None)
             rows.append({
                 "system": system_for_sheet(sheet_name),
                 "systemLabel": SYSTEM_LABELS[system_for_sheet(sheet_name)],
                 "code": code,
                 "name": name,
-                "model": normalize_text(values[3] if len(values) > 3 else None),
-                "unit": normalize_text(values[4] if len(values) > 4 else None),
+                "model": model,
+                "unit": normalize_text(values[columns["unit"]] if len(values) > columns["unit"] else None),
                 "installedUnitPrice": price,
                 "source": source_with_fields(
                     workbook_path,
                     sheet_name,
                     row_index + 1,
                     name=name,
-                    model=normalize_text(values[3] if len(values) > 3 else None),
+                    model=model,
                 ),
             })
             count += 1
         sheet_counts[sheet_name] = count
-    workbook.release_resources()
     return rows, sheet_counts
 
 
@@ -428,19 +577,29 @@ def deduplicate_equipment(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
 
 def read_example_control(example_path: Path) -> dict[str, Any]:
     rows, sheet_counts = read_equipment_rows(example_path)
-    workbook = xlrd.open_workbook(example_path, on_demand=True)
+    sheet_names, tables = read_tabular_workbook(example_path)
     selected = []
-    for sheet_name in workbook.sheet_names():
+    for sheet_name in sheet_names:
         if sheet_name in STOCK_SHEETS:
             continue
-        sheet = workbook.sheet_by_name(sheet_name)
-        header_index = find_specification_header(sheet)
-        if header_index is None:
+        sheet_rows = tables[sheet_name]
+        header = find_specification_header(example_path, sheet_name, sheet_rows)
+        if header is None:
             continue
-        for row_index in range(header_index + 1, sheet.nrows):
-            values = sheet.row_values(row_index)
-            code = normalize_code(values[1] if len(values) > 1 else None)
-            quantity = normalize_number(values[5] if len(values) > 5 else None, allow_none=True)
+        header_index, columns = header
+        for row_index, values in enumerate(sheet_rows[header_index + 1:], header_index + 1):
+            if is_repeated_equipment_header(values, columns):
+                continue
+            source = source_ref(example_path, sheet_name, row_index + 1)
+            code = normalize_code(values[columns["code"]] if len(values) > columns["code"] else None)
+            if not code:
+                continue
+            quantity = normalize_number(
+                values[columns["quantity"]] if len(values) > columns["quantity"] else None,
+                allow_none=True,
+                source=source,
+                field="quantity",
+            )
             if code and quantity is not None and quantity > 0:
                 selected.append({
                     "sheet": sheet_name,
@@ -448,7 +607,6 @@ def read_example_control(example_path: Path) -> dict[str, Any]:
                     "code": code,
                     "quantity": quantity,
                 })
-    workbook.release_resources()
     return {
         "workbook": example_path.name,
         "role": "control-and-provenance-only",
@@ -468,6 +626,14 @@ def read_equipment_template(template_path: Path, example_path: Path) -> dict[str
         "items": deduplicate_equipment(rows),
         "exampleControl": read_example_control(example_path),
     }
+
+
+def validate_equipment_variant_allowlist(allowlist: dict[Any, Any]) -> None:
+    for key, rule in allowlist.items():
+        if rule.get("canonical") not in rule.get("variants", set()):
+            raise ValueError(
+                f"equipment allowlist key {key!r} has canonical value outside reviewed variants"
+            )
 
 
 def validate_calculator(calculator: dict[str, Any]) -> None:
@@ -530,9 +696,43 @@ def build_manifest(paths: Iterable[Path]) -> dict[str, Any]:
     }
 
 
-def write_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+def serialize_json(data: dict[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def write_catalogs_atomically(
+    output_dir: Path,
+    calculator: dict[str, Any],
+    equipment: dict[str, Any],
+    manifest: dict[str, Any],
+) -> None:
+    payloads = {
+        "calculator.json": serialize_json(calculator),
+        "equipment.json": serialize_json(equipment),
+        "import-manifest.json": serialize_json(manifest),
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temporary: dict[str, Path] = {}
+    try:
+        for name, payload in payloads.items():
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=output_dir,
+                prefix=f".{name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary[name] = Path(handle.name)
+        for name in payloads:
+            os.replace(temporary[name], output_dir / name)
+            temporary.pop(name)
+    finally:
+        for path in temporary.values():
+            path.unlink(missing_ok=True)
 
 
 def import_sources(
@@ -541,15 +741,15 @@ def import_sources(
     filled_example_path: Path,
     output_dir: Path,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    validate_equipment_variant_allowlist(EQUIPMENT_VARIANT_ALLOWLIST)
     calculator = read_calculator_reference(reference_path)
     equipment = read_equipment_template(template_path, filled_example_path)
     validate_calculator(calculator)
     validate_equipment(equipment)
-    write_json(output_dir / "calculator.json", calculator)
-    write_json(output_dir / "equipment.json", equipment)
-    write_json(output_dir / "import-manifest.json", build_manifest([
+    manifest = build_manifest([
         reference_path, template_path, filled_example_path
-    ]))
+    ])
+    write_catalogs_atomically(output_dir, calculator, equipment, manifest)
     return calculator, equipment
 
 

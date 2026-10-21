@@ -7,7 +7,7 @@
       "Hikvision B2C": 62,
       "Б_У комплекты для АРЕНДЫ": 3,
       "Неотапливаемые": 16,
-      "Ритм B2B ОС": 36,
+      "Ритм B2B ОС": 34,
       "Ритм В2С Квартиры": 36,
       "СИ-НОРД_B2BиB2C c LAN или Wi-Fi": 48,
       "Си-Норд B2B КТС": 10,
@@ -87,7 +87,7 @@
         "sheet": "СИ-НОРД_B2BиB2C c LAN или Wi-Fi"
       }
     ],
-    "specificationRowCount": 366,
+    "specificationRowCount": 364,
     "workbook": "Копия Спецификация_НДВ_6065286.xls"
   },
   "excludedSheets": [
