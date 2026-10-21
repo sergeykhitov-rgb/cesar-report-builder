@@ -713,6 +713,41 @@ def write_catalogs_atomically(
     }
     output_dir.mkdir(parents=True, exist_ok=True)
     temporary: dict[str, Path] = {}
+    backups: dict[str, Path] = {}
+    preserve_failed_backups = False
+
+    def reserve_backup(name: str) -> Path:
+        descriptor, backup_name = tempfile.mkstemp(
+            dir=output_dir,
+            prefix=f".{name}.",
+            suffix=".bak",
+        )
+        os.close(descriptor)
+        backup = Path(backup_name)
+        backup.unlink()
+        return backup
+
+    def restore_backups(original_error: Exception) -> None:
+        nonlocal preserve_failed_backups
+        rollback_errors = []
+        for name in payloads:
+            destination = output_dir / name
+            backup = backups.get(name)
+            try:
+                if backup is None:
+                    destination.unlink(missing_ok=True)
+                elif backup.exists():
+                    os.replace(backup, destination)
+                    backups.pop(name)
+            except OSError as rollback_error:
+                rollback_errors.append(f"{name}: {rollback_error}")
+        if rollback_errors:
+            preserve_failed_backups = True
+            raise RuntimeError(
+                "catalog replacement failed and rollback was incomplete: "
+                + "; ".join(rollback_errors)
+            ) from original_error
+
     try:
         for name, payload in payloads.items():
             with tempfile.NamedTemporaryFile(
@@ -727,12 +762,46 @@ def write_catalogs_atomically(
                 handle.flush()
                 os.fsync(handle.fileno())
                 temporary[name] = Path(handle.name)
-        for name in payloads:
-            os.replace(temporary[name], output_dir / name)
-            temporary.pop(name)
+        try:
+            for name in payloads:
+                destination = output_dir / name
+                if destination.exists():
+                    backup = reserve_backup(name)
+                    os.replace(destination, backup)
+                    backups[name] = backup
+        except OSError as backup_error:
+            rollback_errors = []
+            for name, backup in list(backups.items()):
+                try:
+                    os.replace(backup, output_dir / name)
+                    backups.pop(name)
+                except OSError as rollback_error:
+                    rollback_errors.append(f"{name}: {rollback_error}")
+            if rollback_errors:
+                preserve_failed_backups = True
+                raise RuntimeError(
+                    "catalog backup failed and rollback was incomplete: "
+                    + "; ".join(rollback_errors)
+                ) from backup_error
+            raise backup_error
+
+        try:
+            for name in payloads:
+                os.replace(temporary[name], output_dir / name)
+                temporary.pop(name)
+        except OSError as replacement_error:
+            restore_backups(replacement_error)
+            raise
+
+        for name, backup in list(backups.items()):
+            backup.unlink()
+            backups.pop(name)
     finally:
         for path in temporary.values():
             path.unlink(missing_ok=True)
+        if not preserve_failed_backups:
+            for path in backups.values():
+                path.unlink(missing_ok=True)
 
 
 def import_sources(

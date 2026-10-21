@@ -100,6 +100,92 @@ for name in ('calculator.json', 'equipment.json', 'import-manifest.json'):
   }
 });
 
+test('atomic catalog writer restores all originals when the second staged replacement fails', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'calculator-rollback-'));
+  try {
+    const result = runPython(`
+from pathlib import Path
+output = Path(${JSON.stringify(temp)})
+originals = {
+    'calculator.json': b'original-calculator\\x00\\xff',
+    'equipment.json': b'original-equipment\\x01\\xfe',
+    'import-manifest.json': b'original-manifest\\x02\\xfd',
+}
+for name, content in originals.items():
+    (output / name).write_bytes(content)
+
+real_replace = module.os.replace
+failed = False
+def fail_second_install(source, destination):
+    global failed
+    source = Path(source)
+    destination = Path(destination)
+    if not failed and source.suffix == '.tmp' and destination.name == 'equipment.json':
+        failed = True
+        raise OSError('injected second replacement failure')
+    return real_replace(source, destination)
+
+module.os.replace = fail_second_install
+try:
+    module.write_catalogs_atomically(output, {'new': 1}, {'new': 2}, {'new': 3})
+except OSError as error:
+    assert 'injected second replacement failure' in str(error)
+else:
+    raise AssertionError('replacement unexpectedly succeeded')
+finally:
+    module.os.replace = real_replace
+
+for name, content in originals.items():
+    assert (output / name).read_bytes() == content, name
+assert sorted(path.name for path in output.iterdir()) == sorted(originals), list(output.iterdir())
+`);
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('atomic catalog rollback removes newly installed files that had no original destination', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'calculator-rollback-missing-'));
+  try {
+    const result = runPython(`
+from pathlib import Path
+output = Path(${JSON.stringify(temp)})
+(output / 'calculator.json').write_bytes(b'original-calculator')
+(output / 'import-manifest.json').write_bytes(b'original-manifest')
+
+real_replace = module.os.replace
+failed = False
+def fail_third_install(source, destination):
+    global failed
+    source = Path(source)
+    destination = Path(destination)
+    if not failed and source.suffix == '.tmp' and destination.name == 'import-manifest.json':
+        failed = True
+        raise OSError('injected third replacement failure')
+    return real_replace(source, destination)
+
+module.os.replace = fail_third_install
+try:
+    module.write_catalogs_atomically(output, {'new': 1}, {'new': 2}, {'new': 3})
+except OSError:
+    pass
+else:
+    raise AssertionError('replacement unexpectedly succeeded')
+finally:
+    module.os.replace = real_replace
+
+assert (output / 'calculator.json').read_bytes() == b'original-calculator'
+assert not (output / 'equipment.json').exists()
+assert (output / 'import-manifest.json').read_bytes() == b'original-manifest'
+assert sorted(path.name for path in output.iterdir()) == ['calculator.json', 'import-manifest.json']
+`);
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test('importer produces identical expected JSON on two fixture runs', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'calculator-import-'));
   try {
