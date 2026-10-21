@@ -115,6 +115,67 @@ function clean(v, depth) {
   return null;
 }
 
+/* Публичный контракт отчёта: пересобираем разрешённые поля после общей очистки.
+   Клиентская проекция полезна для размера запроса, но не является границей доверия. */
+function publicReportPayload(input) {
+  function record(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+  function scalar(value) {
+    return typeof value === 'string' || typeof value === 'boolean' ||
+      (typeof value === 'number' && Number.isFinite(value)) || value === null ? value : undefined;
+  }
+  function fields(value, allowed) {
+    var source = record(value), output = {};
+    allowed.forEach(function (key) {
+      var safe = scalar(source[key]);
+      if (safe !== undefined) output[key] = safe;
+    });
+    return output;
+  }
+  function list(value, projector) {
+    return Array.isArray(value) ? value.map(projector).filter(function (item) { return item !== null; }) : [];
+  }
+  function stringList(value) {
+    return Array.isArray(value) ? value.filter(function (item) { return typeof item === 'string'; }) : [];
+  }
+
+  var source = record(input), output = fields(source, [
+    'title', 'subtitle', 'objectTitle', 'heroPhoto', 'eventsTitle', 'disclaimer'
+  ]);
+  output.object = fields(source.object, ['pin', 'owner', 'brand', 'model', 'plate', 'address']);
+  output.summary = fields(source.summary, ['alarms', 'incidents', 'alarmsLabel', 'incidentsLabel', 'extraLabel']);
+  output.events = list(source.events, function (event) {
+    return event && typeof event === 'object' && !Array.isArray(event)
+      ? fields(event, ['signal', 'date', 'time', 'address', 'photo', 'note']) : null;
+  });
+  output.manager = fields(source.manager, ['label', 'name', 'role', 'phone', 'email', 'photo']);
+  output.promotions = list(source.promotions, function (promotion) {
+    return promotion && typeof promotion === 'object' && !Array.isArray(promotion)
+      ? fields(promotion, ['title', 'description', 'image']) : null;
+  });
+
+  if (source.proposal && typeof source.proposal === 'object' && !Array.isArray(source.proposal)) {
+    var proposal = record(source.proposal), computed = record(proposal.computed);
+    output.proposal = {
+      client: fields(proposal.client, ['name', 'phone', 'email']),
+      scenario: fields(proposal.scenario, ['segment', 'region', 'objectType', 'tariff', 'rent', 'label']),
+      items: list(proposal.items, function (item) {
+        return item && typeof item === 'object' && !Array.isArray(item)
+          ? fields(item, ['system', 'systemLabel', 'code', 'name', 'model', 'unit', 'quantity', 'installedUnitPrice', 'lineTotal']) : null;
+      }),
+      selectedOptionNames: stringList(proposal.selectedOptionNames),
+      computed: {
+        equipment: fields(computed.equipment, ['subtotal', 'discountAmount', 'afterDiscount']),
+        installation: fields(computed.installation, ['final']),
+        oneTime: fields(computed.oneTime, ['final']),
+        monthlyFee: fields(computed.monthlyFee, ['final']),
+        materialLiability: fields(computed.materialLiability, ['final']),
+        tariff: fields(computed.tariff, ['resolvedName'])
+      }
+    };
+  }
+  return output;
+}
+
 const server = http.createServer(function (req, res) {
   var url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   var pathname = decodeURIComponent(url.pathname);
@@ -124,7 +185,7 @@ const server = http.createServer(function (req, res) {
     readBody(req).then(function (raw) {
       var data;
       try { data = JSON.parse(raw); } catch (e) { return sendJSON(res, 400, { error: 'bad json' }); }
-      data = clean(data);
+      data = publicReportPayload(clean(data));
       data.id = genId();
       data.createdAt = new Date().toISOString();
       fs.writeFile(path.join(DATA, data.id + '.json'), JSON.stringify(data), function (err) {
