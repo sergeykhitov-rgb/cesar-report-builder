@@ -249,7 +249,7 @@ test('POST xlsx derives unique system groups server-side and returns a ZIP with 
   const port = await startServer(t);
   const payload = exportPayload([
     { system: 'ritm', systemLabel: 'Охрана/Видео', code: 'R-1', name: 'Панель', quantity: 1, installedUnitPrice: 1000 },
-    { system: 'hik', systemLabel: 'Охрана:Видео', code: 'H-1', name: 'Камера', quantity: 2, installedUnitPrice: 2000 },
+    { system: 'hikvision', systemLabel: 'Охрана:Видео', code: 'H-1', name: 'Камера', quantity: 2, installedUnitPrice: 2000 },
   ]);
   payload.exportGroups = [{ id: 'evil', label: 'Подмена', items: payload.items }];
   const response = await postJSON(port, '/api/exports/xlsx', payload);
@@ -267,6 +267,36 @@ test('POST xlsx derives unique system groups server-side and returns a ZIP with 
   assert.doesNotMatch(first, /H-1|Камера|Подмена/);
   assert.match(second, /H-1|Камера/);
   assert.doesNotMatch(second, /R-1|Панель|Подмена/);
+});
+
+test('POST xlsx ZIP entry names stay unique under adversarial display-label collisions', async t => {
+  const port = await startServer(t);
+  const systems = ['ritm', 'si-nord', 'hikvision', 'rental-used', 'other'];
+  const labels = ['Система', 'система', 'Система (2)', 'Система/Видео', 'Система:Видео'];
+  const response = await postJSON(port, '/api/exports/xlsx', exportPayload(systems.map((system, index) => ({
+    system, systemLabel: labels[index], code: 'C-' + index, name: 'Позиция ' + index, quantity: 1, installedUnitPrice: 100 + index,
+  }))));
+  assert.equal(response.status, 200);
+  const archive = await unzipper.Open.buffer(response.body);
+  const names = archive.files.map(file => file.path);
+  const normalized = names.map(name => name.normalize('NFC').toLocaleLowerCase('ru'));
+  assert.equal(names.length, systems.length);
+  assert.equal(new Set(normalized).size, names.length);
+  names.forEach(name => {
+    assert.ok(name.endsWith('.xlsx'));
+    assert.ok(Buffer.byteLength(name, 'utf8') <= 140, name);
+  });
+});
+
+test('POST xlsx rejects unsafe, unknown and Unicode-lookalike system IDs', async t => {
+  const port = await startServer(t);
+  for (const system of ['', '../ritm', 'ritm/../hikvision', 'ritm\\evil', 'RITM', 'rіtm', 'ritm\n', 'unknown', 'si--nord']) {
+    const response = await postJSON(port, '/api/exports/xlsx', exportPayload([
+      { system, systemLabel: 'Display label', code: 'X-1', name: 'Позиция', quantity: 1, installedUnitPrice: 100 },
+    ]));
+    assert.equal(response.status, 422, JSON.stringify(system));
+    assert.match(response.body.toString('utf8'), /system/i);
+  }
 });
 
 test('POST xlsx rejects malformed exports with structured 400 or 422 and does not crash', async t => {

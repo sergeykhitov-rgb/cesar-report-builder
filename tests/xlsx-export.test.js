@@ -113,6 +113,20 @@ test('builder rejects malformed proposal, group, items, quantities and prices', 
   for (const [proposal, group] of invalidCases) await assert.rejects(() => buildEstimateWorkbook(proposal, group), /invalid|обяз|quantity|price|item|group|proposal/i);
 });
 
+test('builder accepts only known ASCII catalog system IDs', async () => {
+  const valid = fixture();
+  for (const id of ['ritm', 'si-nord', 'hikvision', 'rental-used', 'other']) {
+    const proposal = { ...valid, items: [{ ...valid.items[0], system: id }] };
+    await assert.doesNotReject(() => buildEstimateWorkbook(proposal, { id, label: 'Система' }));
+  }
+  for (const id of ['', '../ritm', 'ritm/../hikvision', 'ritm\\evil', 'RITM', 'rіtm', 'ritm\n', 'unknown', 'si--nord']) {
+    const proposal = { ...valid, items: [{ ...valid.items[0], system: id }] };
+    await assert.rejects(() => buildEstimateWorkbook(proposal, { id, label: 'Система' }), /system|invalid/i, id || 'empty');
+  }
+  const contaminated = { ...valid, items: [valid.items[0], { ...valid.items[0], system: '../ritm', code: 'bad' }] };
+  await assert.rejects(() => buildEstimateWorkbook(contaminated, { id: 'ritm', label: 'РИТМ' }), /system|invalid/i);
+});
+
 test('estimate filenames are Cyrillic, sanitized, bounded and deterministically unique', () => {
   const proposal = fixture();
   proposal.client.name = 'ООО \\:Клиент/*?"<>|\u0001 с очень длинным названием '.repeat(8);
@@ -121,6 +135,7 @@ test('estimate filenames are Cyrillic, sanitized, bounded and deterministically 
   assert.match(name, /— РИТМОхрана\.xlsx$/);
   assert.doesNotMatch(name, /[\\/:*?"<>|\u0000-\u001F]/);
   assert.ok(name.length <= 140);
+  assert.ok(Buffer.byteLength(name, 'utf8') <= 140);
   assert.deepEqual(uniqueEstimateFilenames(fixture(), [
     { id: 'one', label: 'Охрана/Видео' }, { id: 'two', label: 'Охрана:Видео' }, { id: 'three', label: 'Охрана:Видео' },
   ]), [
@@ -128,4 +143,27 @@ test('estimate filenames are Cyrillic, sanitized, bounded and deterministically 
     'Смета ООО «Клиент» — ОхранаВидео (2).xlsx',
     'Смета ООО «Клиент» — ОхранаВидео (3).xlsx',
   ]);
+});
+
+test('filename allocator registers every final normalized name and always stays within 140 UTF-8 bytes', () => {
+  const proposal = fixture();
+  proposal.client.name = 'Клиент '.repeat(80);
+  const groups = [
+    { id: 'ritm', label: 'Система' },
+    { id: 'si-nord', label: 'система' },
+    { id: 'hikvision', label: 'Система (2)' },
+    { id: 'rental-used', label: 'Систе\u0301ма' },
+    { id: 'other', label: 'Систе́ма' },
+    { id: 'ritm', label: 'Система/Видео' },
+    { id: 'si-nord', label: 'Система:Видео' },
+  ];
+  const names = uniqueEstimateFilenames(proposal, groups);
+  const normalized = names.map(name => name.normalize('NFC').toLocaleLowerCase('ru'));
+  assert.equal(new Set(normalized).size, names.length);
+  names.forEach(name => {
+    assert.ok(name.endsWith('.xlsx'), name);
+    assert.ok(name.length <= 140, name);
+    assert.ok(Buffer.byteLength(name, 'utf8') <= 140, name);
+  });
+  assert.ok(names.some(name => /\(2\) \(2\)\.xlsx$/.test(name)), names.join('\n'));
 });

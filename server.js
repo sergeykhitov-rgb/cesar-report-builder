@@ -8,7 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { ZipArchive } = require('archiver');
-const { MIME_XLSX, buildEstimateWorkbook, estimateFilename, uniqueEstimateFilenames } = require('./lib/xlsx-export');
+const { MIME_XLSX, buildEstimateWorkbook, estimateFilename, uniqueEstimateFilenames, validateSystemId } = require('./lib/xlsx-export');
 
 const PORT = process.env.PORT || 4600;
 const ROOT = __dirname;
@@ -45,10 +45,10 @@ function exportGroupsFromItems(items) {
   }
   var groups = [], seen = Object.create(null);
   items.forEach(function (item, index) {
-    if (!item || typeof item !== 'object' || Array.isArray(item) || typeof item.system !== 'string' || !item.system.trim()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
       var error = new Error('item system is required'); error.code = 'INVALID_EXPORT'; error.path = 'items.' + index + '.system'; throw error;
     }
-    var id = item.system.trim();
+    var id = validateSystemId(item.system, 'items.' + index + '.system');
     if (seen[id]) return;
     seen[id] = true;
     groups.push({ id: id, label: typeof item.systemLabel === 'string' && item.systemLabel.trim() ? item.systemLabel.trim() : id });
