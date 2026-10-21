@@ -135,7 +135,7 @@ test('POST reports stores only the server-side public report allowlist', async t
         quantity: 2, installedUnitPrice: 1500, lineTotal: 3000,
         sourceInstalledUnitPrice: 1200, priceOverridden: true, overrideReason: 'secret', sourceRows: [7], unknownItem: 'secret',
       }],
-      selectedOptionNames: ['Реагирование'],
+      selectedOptionNames: ['Реагирование'], discountPercent: 12.5,
       computed: {
         equipment: { subtotal: 3200, discountAmount: 200, afterDiscount: 3000, source: 'formula' },
         installation: { final: 5000, override: 1, overrideReason: 'secret' },
@@ -169,6 +169,7 @@ test('POST reports stores only the server-side public report allowlist', async t
   });
   assert.equal(report.proposal.computed.installation.final, 5000);
   assert.equal(report.proposal.computed.tariff.resolvedName, 'Бизнес');
+  assert.equal(report.proposal.discountPercent, 12.5);
 
   const serialized = JSON.stringify(report);
   for (const forbidden of [
@@ -177,4 +178,13 @@ test('POST reports stores only the server-side public report allowlist', async t
     'overrideReason', 'overrides', 'warnings', 'rawCatalog', 'rawCatalogs', 'provenance',
     'unknownItem', 'unknownComputed', 'unknownProposal', 'unknownTotal', 'internalId',
   ]) assert.equal(serialized.includes(forbidden), false, forbidden + ' leaked into public JSON');
+
+  malicious.proposal.discountPercent = -1;
+  const invalidCreated = await postJSON(port, '/api/reports', malicious);
+  assert.equal(invalidCreated.status, 200);
+  const invalidId = JSON.parse(invalidCreated.body.toString('utf8')).id;
+  t.after(() => require('node:fs').rmSync(path.join(ROOT, 'data', 'reports', invalidId + '.json'), { force: true }));
+  const invalidFetched = await request(port, '/api/reports/' + invalidId);
+  const invalidReport = JSON.parse(invalidFetched.body.toString('utf8'));
+  assert.equal(Object.hasOwn(invalidReport.proposal, 'discountPercent'), false);
 });

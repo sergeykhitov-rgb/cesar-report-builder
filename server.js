@@ -137,6 +137,9 @@ function publicReportPayload(input) {
   function stringList(value) {
     return Array.isArray(value) ? value.filter(function (item) { return typeof item === 'string'; }) : [];
   }
+  function nonnegativeNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+  }
 
   var source = record(input), output = fields(source, [
     'title', 'subtitle', 'objectTitle', 'heroPhoto', 'eventsTitle', 'disclaimer'
@@ -163,6 +166,7 @@ function publicReportPayload(input) {
           ? fields(item, ['system', 'systemLabel', 'code', 'name', 'model', 'unit', 'quantity', 'installedUnitPrice', 'lineTotal']) : null;
       }),
       selectedOptionNames: stringList(proposal.selectedOptionNames),
+      discountPercent: nonnegativeNumber(proposal.discountPercent),
       computed: {
         equipment: fields(computed.equipment, ['subtotal', 'discountAmount', 'afterDiscount']),
         installation: fields(computed.installation, ['final']),
