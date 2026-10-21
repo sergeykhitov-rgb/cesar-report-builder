@@ -126,6 +126,53 @@ test('B2C rent uses rental lookup and adds 60 per additional sensor', () => {
   assert.ok(result.warnings.some(warning => warning.code === 'UNRESOLVED_RENTAL_OPTION'));
 });
 
+test('B2C rent keeps selected equipment data but makes its payable contribution zero without mutation', () => {
+  const sourceInput = input({
+    rent: true,
+    installationCalculated: 500,
+    items: [{
+      system: 'ritm',
+      systemLabel: 'Ритм',
+      code: 'RENT-1',
+      name: 'Арендный комплект',
+      model: 'R1',
+      unit: 'шт.',
+      quantity: 2,
+      installedUnitPrice: 1200,
+      category: 'Комплект',
+    }],
+  });
+  const before = structuredClone(sourceInput);
+
+  const result = engine().calculate(sourceInput, catalogs);
+
+  assert.equal(result.equipment.items[0].installedUnitPrice, 1200);
+  assert.equal(result.equipment.items[0].lineTotal, 2400);
+  assert.equal(result.equipment.afterDiscount, 0);
+  assert.equal(result.oneTime.final, 500);
+  assert.deepEqual(sourceInput, before);
+});
+
+test('one camera keeps video display tariff but uses underlying Value rental rate', () => {
+  const result = engine().calculate(input({ rent: true, tariff: 'Выгодный', cameraCount: 1 }), catalogs);
+
+  assert.equal(result.tariff.resolvedName, 'Видео Выгодный');
+  assert.equal(result.monthlyFee.base, 2700);
+  assert.equal(result.monthlyFee.rentalAdjustments, 0);
+  assert.equal(result.monthlyFee.final, 2700);
+  assert.equal(result.warnings.some(warning => warning.code === 'MISSING_TARIFF_RATE'), false);
+});
+
+test('three rental cameras use Basic rental rate and charge only two extra cameras', () => {
+  const result = engine().calculate(input({ rent: true, cameraCount: 3 }), catalogs);
+
+  assert.equal(result.tariff.resolvedName, 'Видео Базовый');
+  assert.equal(result.monthlyFee.base, 2300);
+  assert.equal(result.monthlyFee.rentalAdjustments, 500);
+  assert.equal(result.monthlyFee.final, 2800);
+  assert.equal(result.warnings.some(warning => warning.code === 'MISSING_TARIFF_RATE'), false);
+});
+
 test('missing tariff rate returns a warning and null affected values', () => {
   const result = engine().calculate(input({ region: 'Неизвестный регион', monthlyFeeOverride: 1000 }), catalogs);
 

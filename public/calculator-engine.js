@@ -139,7 +139,7 @@
     const sameRegion = entries.filter(tariff => tariff.region === input.region);
     const objectType = normalizeObjectType(input.objectType, sameRegion);
     let lookupName = names.resolvedName;
-    if (input.rent && /^Видео /.test(lookupName)) lookupName = names.resolvedName;
+    if (input.rent && /^Видео /.test(lookupName)) lookupName = baseTariffName(lookupName);
     const match = objectType && sameRegion.find(tariff => tariff.objectType === objectType && tariff.name === lookupName);
     if (!match || !Number.isFinite(match.monthlyPrice)) {
       warnings.push(warning('MISSING_TARIFF_RATE', 'tariff', 'Не найдена ставка B2C для выбранных региона, объекта и тарифа.'));
@@ -177,7 +177,9 @@
     if (!allowed) warnings.push(warning('INVALID_DISCOUNT', 'discountPercent', 'Скидка отсутствует в списке разрешённых значений.'));
     const subtotal = invalid ? null : roundMoney(items.reduce((sum, item) => sum + item.lineTotal, 0));
     const discountAmount = subtotal === null ? null : roundMoney(subtotal * discountPercent / 100);
-    const afterDiscount = subtotal === null ? null : roundMoney(subtotal - discountAmount);
+    const afterDiscount = subtotal === null ? null
+      : input.segment === 'B2C' && input.rent ? 0
+        : roundMoney(subtotal - discountAmount);
     return { items, subtotal, discountPercent, discountAmount, afterDiscount };
   }
 
