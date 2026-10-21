@@ -7,14 +7,24 @@
 
   const HOUSE_TYPES = new Set(['Дом', 'Коттедж', 'неотапливаемое', 'Неотапливаемое', 'Дом/неотапливаемое']);
   const CAMERA_OPTION_PATTERN = /видеокамер/i;
+  const COUNT_FIELDS = ['cameraCount', 'additionalHouseholdSensors', 'additionalSecuritySensors', 'baseSecuritySensorCount'];
 
   function roundMoney(value) {
     if (value === null || value === undefined) return null;
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    const [coefficient, exponent = '0'] = String(value).split('e');
+    const shifted = Number(`${coefficient}e${Number(exponent) + 2}`);
+    return Number(`${Math.round(shifted)}e-2`);
   }
 
   function warning(code, field, message) {
     return { code, field, message };
+  }
+
+  function unresolvedRuleWarning(catalogs, topicPattern, field) {
+    const decision = (catalogs.unresolvedDecisions || []).find(item =>
+      topicPattern.test(item.topic) && !/Зафиксировано/i.test(item.status)
+    );
+    return decision ? warning('UNRESOLVED_RULE', field, `${decision.topic}: ${decision.known}`) : null;
   }
 
   function isBlank(value) {
@@ -70,6 +80,23 @@
     return String(name || '').replace(/^Видео[ -]?/, '');
   }
 
+  function normalizeCounts(input) {
+    const counts = {};
+    const warnings = [];
+    COUNT_FIELDS.forEach(field => {
+      const value = input[field];
+      if (value === undefined || value === null) {
+        counts[field] = 0;
+      } else if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && Number.isSafeInteger(value)) {
+        counts[field] = value;
+      } else {
+        counts[field] = 0;
+        warnings.push(warning('INVALID_COUNT', field, 'Количество должно быть конечным неотрицательным целым числом.'));
+      }
+    });
+    return { counts, warnings };
+  }
+
   function isPremium(name) {
     return baseTariffName(name) === 'Премиальный';
   }
@@ -78,12 +105,12 @@
     if (from !== to) changes.push({ from, to, reason });
   }
 
-  function resolveB2CName(input) {
+  function resolveB2CName(input, counts) {
     const changes = [];
     const requestedName = input.tariff;
     let resolvedName = requestedName;
-    const security = Number(input.additionalSecuritySensors || 0);
-    const household = Number(input.additionalHouseholdSensors || 0);
+    const security = counts.additionalSecuritySensors;
+    const household = counts.additionalHouseholdSensors;
     const house = HOUSE_TYPES.has(input.objectType);
 
     if (!isPremium(resolvedName) && baseTariffName(resolvedName) === 'Базовый' && household > 0) {
@@ -102,7 +129,7 @@
       }
     }
 
-    if (Number(input.cameraCount || 0) > 0 && !/^Видео/.test(resolvedName)) {
+    if (counts.cameraCount > 0 && !/^Видео/.test(resolvedName)) {
       const next = `Видео ${resolvedName}`;
       addChange(changes, resolvedName, next, 'Выбрана видеокамера');
       resolvedName = next;
@@ -111,15 +138,21 @@
   }
 
   function resolveTariff(input, catalogs) {
-    const warnings = [];
+    const normalized = normalizeCounts(input);
+    const counts = normalized.counts;
+    const warnings = [...normalized.warnings];
     if (input.segment === 'B2B') {
+      if (counts.additionalHouseholdSensors > 0 || counts.additionalSecuritySensors > 0) {
+        const unresolved = unresolvedRuleWarning(catalogs, /Переходы/, 'tariff');
+        if (unresolved) warnings.push(unresolved);
+      }
       if (input.baseMonthlyFee !== undefined && input.baseMonthlyFee !== null && input.baseMonthlyFee !== '') {
         const supplied = typeof input.baseMonthlyFee === 'number' ? input.baseMonthlyFee : Number(input.baseMonthlyFee);
         if (!Number.isFinite(supplied) || supplied < 0) {
           warnings.push(warning('INVALID_BASE_MONTHLY_FEE', 'baseMonthlyFee', 'Базовая абонентская плата должна быть конечным неотрицательным числом.'));
-          return { requestedName: input.tariff, resolvedName: input.tariff || null, automaticChanges: [], monthlyPrice: null, warnings };
+          return { requestedName: input.tariff, resolvedName: input.tariff || null, automaticChanges: [], monthlyPrice: null, counts, warnings };
         }
-        return { requestedName: input.tariff, resolvedName: input.tariff || null, automaticChanges: [], monthlyPrice: roundMoney(supplied), warnings };
+        return { requestedName: input.tariff, resolvedName: input.tariff || null, automaticChanges: [], monthlyPrice: roundMoney(supplied), counts, warnings };
       }
       const match = (catalogs.b2bTariffs || []).find(tariff => tariff.region === input.region && tariff.name === input.tariff);
       if (!match || !Number.isFinite(match.monthlyPrice)) {
@@ -130,11 +163,12 @@
         resolvedName: match ? match.name : input.tariff || null,
         automaticChanges: [],
         monthlyPrice: match && Number.isFinite(match.monthlyPrice) ? match.monthlyPrice : null,
+        counts,
         warnings,
       };
     }
 
-    const names = resolveB2CName(input);
+    const names = resolveB2CName(input, counts);
     const entries = input.rent ? (catalogs.b2cRentalTariffs || []) : (catalogs.b2cTariffs || []);
     const sameRegion = entries.filter(tariff => tariff.region === input.region);
     const objectType = normalizeObjectType(input.objectType, sameRegion);
@@ -144,10 +178,19 @@
     if (!match || !Number.isFinite(match.monthlyPrice)) {
       warnings.push(warning('MISSING_TARIFF_RATE', 'tariff', 'Не найдена ставка B2C для выбранных региона, объекта и тарифа.'));
     }
+    if (baseTariffName(input.tariff) === 'Эконом' && (counts.additionalHouseholdSensors > 0 || counts.additionalSecuritySensors > 0)) {
+      const unresolved = unresolvedRuleWarning(catalogs, /Эконом/, 'tariff');
+      if (unresolved) warnings.push(unresolved);
+    }
+    if (input.rent) {
+      const unresolved = unresolvedRuleWarning(catalogs, /^Аренда$/, 'rent');
+      if (unresolved) warnings.push(unresolved);
+    }
     return {
       ...names,
       objectType: objectType || input.objectType,
       monthlyPrice: match && Number.isFinite(match.monthlyPrice) ? match.monthlyPrice : null,
+      counts,
       warnings,
     };
   }
@@ -183,11 +226,14 @@
     return { items, subtotal, discountPercent, discountAmount, afterDiscount };
   }
 
-  function resolveOptions(input, catalogs, warnings) {
+  function resolveOptions(input, catalogs, counts, warnings) {
     const selected = [];
+    const seenNames = new Set();
     let total = 0;
     let missingRate = false;
     (Array.isArray(input.selectedOptionNames) ? input.selectedOptionNames : []).forEach(name => {
+      if (seenNames.has(name)) return;
+      seenNames.add(name);
       const matches = (catalogs.options || []).filter(option => option.category === input.segment && option.name === name);
       if (matches.length === 0) {
         warnings.push(warning('MISSING_OPTION', 'selectedOptionNames', `Не найдена опция «${name}».`));
@@ -195,7 +241,7 @@
       }
       const option = { ...matches[0] };
       selected.push(option);
-      if (input.segment === 'B2C' && CAMERA_OPTION_PATTERN.test(option.name) && Number(input.cameraCount || 0) > 0) return;
+      if (input.segment === 'B2C' && CAMERA_OPTION_PATTERN.test(option.name) && counts.cameraCount > 0) return;
       if (!Number.isFinite(option.monthlyPrice)) {
         warnings.push(warning('MISSING_OPTION_RATE', 'selectedOptionNames', `Для опции «${name}» не задана ставка.`));
         missingRate = true;
@@ -206,10 +252,15 @@
     return { selected, total: missingRate ? null : roundMoney(total) };
   }
 
-  function hasRentalSensorRule(catalogs) {
-    return (catalogs.rentalLogic || []).some(rule =>
-      rule.category === 'B2C' && rule.parameter === 'Дополнительные датчики' && /60\s*₽/.test(rule.value)
+  function rentalSensorRate(catalogs) {
+    const rule = (catalogs.rentalLogic || []).find(item =>
+      item.category === 'B2C' && item.parameter === 'Дополнительные датчики'
     );
+    if (!rule || typeof rule.value !== 'string') return null;
+    const match = rule.value.match(/^\s*(\d+(?:[.,]\d{1,2})?)\s*(?:₽|руб(?:\.|ля|лей)?)\s+за\s+кажд(?:ый|ую|ое)\s*$/iu);
+    if (!match) return null;
+    const rate = Number(match[1].replace(',', '.'));
+    return Number.isFinite(rate) && rate >= 0 ? roundMoney(rate) : null;
   }
 
   function liabilityAmount(input, tariff, catalogs) {
@@ -235,7 +286,8 @@
     const equipment = calculateEquipment(input, catalogs, warnings);
     const tariffResolution = resolveTariff(input, catalogs);
     warnings.push(...tariffResolution.warnings);
-    const options = resolveOptions(input, catalogs, warnings);
+    const counts = tariffResolution.counts;
+    const options = resolveOptions(input, catalogs, counts, warnings);
 
     let installationCalculated = input.installationCalculated;
     if (isBlank(installationCalculated)) installationCalculated = input.segment === 'B2B' && input.rent ? 5000 : 0;
@@ -254,19 +306,24 @@
     if (input.segment === 'B2B' && input.rent && tariffResolution.monthlyPrice !== null) {
       rentalAdjustments = roundMoney(tariffResolution.monthlyPrice * 0.15);
     } else if (input.segment === 'B2C') {
-      const cameras = Number(input.cameraCount || 0);
+      const cameras = counts.cameraCount;
       if (cameras > 1) rentalAdjustments += (cameras - 1) * 250;
-      if (input.rent && hasRentalSensorRule(catalogs)) {
-        rentalAdjustments += (Number(input.additionalHouseholdSensors || 0) + Number(input.additionalSecuritySensors || 0)) * 60;
-      }
-      if (input.rent && !(input.selectedOptionNames || []).includes('Аренда оборудования-400')) {
-        warnings.push(warning('UNRESOLVED_RENTAL_OPTION', 'rent', 'Не подтверждено автоматическое применение отдельной опции аренды 400 ₽.'));
+      const additionalRentedSensors = counts.additionalHouseholdSensors + counts.additionalSecuritySensors;
+      if (input.rent && additionalRentedSensors > 0) {
+        const sensorRate = rentalSensorRate(catalogs);
+        if (sensorRate === null) {
+          rentalAdjustments = null;
+          warnings.push(warning('MISSING_RENTAL_SENSOR_RATE', 'rentalLogic', 'Не найдена распознаваемая ставка для дополнительных арендных датчиков.'));
+        } else {
+          rentalAdjustments += roundMoney(additionalRentedSensors * sensorRate);
+        }
       }
     }
     rentalAdjustments = roundMoney(rentalAdjustments);
 
     const base = tariffResolution.monthlyPrice;
-    const monthlyCalculated = base === null || options.total === null ? null : roundMoney(base + options.total + rentalAdjustments);
+    const monthlyCalculated = base === null || options.total === null || rentalAdjustments === null
+      ? null : roundMoney(base + options.total + rentalAdjustments);
     const monthlyFee = withOverrideWarning(applyOverride(monthlyCalculated, input.monthlyFeeOverride), 'monthlyFeeOverride', warnings);
     if (monthlyCalculated === null) {
       monthlyFee.final = null;

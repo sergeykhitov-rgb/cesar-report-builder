@@ -73,6 +73,51 @@ test('camera changes B2C tariff and three cameras charge only two extras', () =>
   assert.equal(result.monthlyFee.final, 2800);
 });
 
+test('invalid counters warn and are ignored before transitions and charges', () => {
+  const cases = [
+    ['cameraCount', -1],
+    ['additionalHouseholdSensors', 0.5],
+    ['additionalSecuritySensors', 'oops'],
+    ['baseSecuritySensorCount', -2],
+    ['cameraCount', Number.MAX_VALUE],
+  ];
+
+  for (const [field, value] of cases) {
+    const result = engine().calculate(input({ [field]: value }), catalogs);
+    assert.equal(result.tariff.resolvedName, 'Базовый', field);
+    assert.equal(result.monthlyFee.rentalAdjustments, 0, field);
+    assert.equal(Number.isNaN(result.monthlyFee.final), false, field);
+    assert.ok(result.warnings.some(warning => warning.code === 'INVALID_COUNT' && warning.field === field), field);
+  }
+});
+
+test('invalid fractional camera count cannot suppress an explicitly selected camera option', () => {
+  const result = engine().calculate(input({
+    cameraCount: 1.5,
+    selectedOptionNames: ['Видеокамера для Cesar Home'],
+  }), catalogs);
+
+  assert.equal(result.tariff.resolvedName, 'Базовый');
+  assert.equal(result.monthlyFee.options, 250);
+  assert.equal(result.monthlyFee.final, 2240);
+  assert.ok(result.warnings.some(warning => warning.code === 'INVALID_COUNT' && warning.field === 'cameraCount'));
+});
+
+test('money rounds decimal half-up to kopecks for values, multiplication, and sums', () => {
+  const direct = engine().applyOverride(0, 10.075);
+  const result = engine().calculate(input({
+    items: [
+      { system: 'x', systemLabel: 'X', code: '1', name: 'One', model: '', unit: 'шт.', quantity: 1, installedUnitPrice: 10.075 },
+      { system: 'x', systemLabel: 'X', code: '2', name: 'Two', model: '', unit: 'шт.', quantity: 3, installedUnitPrice: 3.355 },
+      { system: 'x', systemLabel: 'X', code: '3', name: 'Three', model: '', unit: 'шт.', quantity: 1, installedUnitPrice: 0.005 },
+    ],
+  }), catalogs);
+
+  assert.equal(direct.final, 10.08);
+  assert.deepEqual(result.equipment.items.map(item => item.lineTotal), [10.08, 10.07, 0.01]);
+  assert.equal(result.equipment.subtotal, 20.16);
+});
+
 test('apartment Basic security threshold changes only above three extra sensors', () => {
   assert.equal(engine().calculate(input({ additionalSecuritySensors: 3 }), catalogs).tariff.resolvedName, 'Базовый');
   assert.equal(engine().calculate(input({ additionalSecuritySensors: 4 }), catalogs).tariff.resolvedName, 'Премиальный');
@@ -96,6 +141,21 @@ test('household sensor promotes Basic to Value while Premium stays Premium', () 
   assert.equal(engine().calculate(input({ tariff: 'Премиальный', additionalHouseholdSensors: 9, additionalSecuritySensors: 9 }), catalogs).tariff.resolvedName, 'Премиальный');
 });
 
+test('Econom sensor scenario stays unresolved and surfaces the matching catalog decision', () => {
+  const result = engine().calculate(input({
+    region: 'ПФО, ЮФО, УФО, СФО',
+    tariff: 'Эконом',
+    additionalHouseholdSensors: 1,
+  }), catalogs);
+
+  assert.equal(result.tariff.resolvedName, 'Эконом');
+  assert.ok(result.warnings.some(warning =>
+    warning.code === 'UNRESOLVED_RULE'
+    && warning.field === 'tariff'
+    && /Эконом/.test(warning.message)
+  ));
+});
+
 test('B2B rent increases a supplied 5000 base tariff by 15 percent', () => {
   const result = engine().calculate(input({
     segment: 'B2B', region: 'Москва и МО, ЦФО', objectType: '', tariff: '', rent: true, baseMonthlyFee: 5000,
@@ -104,6 +164,23 @@ test('B2B rent increases a supplied 5000 base tariff by 15 percent', () => {
   assert.equal(result.monthlyFee.base, 5000);
   assert.equal(result.monthlyFee.rentalAdjustments, 750);
   assert.equal(result.monthlyFee.final, 5750);
+});
+
+test('B2B sensors do not invent a transition and surface the matching unresolved decision', () => {
+  const result = engine().calculate(input({
+    segment: 'B2B',
+    region: 'СЗФО',
+    objectType: '',
+    tariff: 'Бизнес-4300',
+    additionalSecuritySensors: 1,
+  }), catalogs);
+
+  assert.equal(result.tariff.resolvedName, 'Бизнес-4300');
+  assert.ok(result.warnings.some(warning =>
+    warning.code === 'UNRESOLVED_RULE'
+    && warning.field === 'tariff'
+    && /Переходы/.test(warning.message)
+  ));
 });
 
 test('B2B rental installation defaults to 5000 and warns below minimum', () => {
@@ -123,7 +200,41 @@ test('B2C rent uses rental lookup and adds 60 per additional sensor', () => {
   assert.equal(result.monthlyFee.base, 2700);
   assert.equal(result.monthlyFee.rentalAdjustments, 180);
   assert.equal(result.monthlyFee.final, 2880);
-  assert.ok(result.warnings.some(warning => warning.code === 'UNRESOLVED_RENTAL_OPTION'));
+  const unresolved = result.warnings.filter(warning =>
+    warning.code === 'UNRESOLVED_RULE'
+    && warning.field === 'rent'
+    && /Аренда/.test(warning.message)
+  );
+  assert.equal(unresolved.length, 1);
+  assert.equal(result.warnings.some(warning => warning.code === 'UNRESOLVED_RENTAL_OPTION'), false);
+});
+
+test('B2C rental sensor rate safely parses the catalog руб variant', () => {
+  const variantCatalogs = structuredClone(catalogs);
+  const rule = variantCatalogs.rentalLogic.find(item => item.category === 'B2C' && item.parameter === 'Дополнительные датчики');
+  rule.value = '60 руб за каждый';
+
+  const result = engine().calculate(input({ rent: true, additionalSecuritySensors: 2 }), variantCatalogs);
+
+  assert.equal(result.monthlyFee.rentalAdjustments, 120);
+  assert.equal(result.monthlyFee.final, 2420);
+});
+
+test('missing or unrecognized rental sensor rate warns and nulls the affected calculation', () => {
+  const variants = [
+    catalogs.rentalLogic.filter(item => !(item.category === 'B2C' && item.parameter === 'Дополнительные датчики')),
+    catalogs.rentalLogic.map(item => item.category === 'B2C' && item.parameter === 'Дополнительные датчики'
+      ? { ...item, value: 'около 60 ₽' }
+      : item),
+  ];
+
+  for (const rentalLogic of variants) {
+    const result = engine().calculate(input({ rent: true, additionalHouseholdSensors: 1 }), { ...catalogs, rentalLogic });
+    assert.equal(result.monthlyFee.rentalAdjustments, null);
+    assert.equal(result.monthlyFee.calculated, null);
+    assert.equal(result.monthlyFee.final, null);
+    assert.ok(result.warnings.some(warning => warning.code === 'MISSING_RENTAL_SENSOR_RATE' && warning.field === 'rentalLogic'));
+  }
 });
 
 test('B2C rent keeps selected equipment data but makes its payable contribution zero without mutation', () => {
@@ -193,6 +304,23 @@ test('selected options add monthly prices without double-counting camera option'
   assert.equal(result.monthlyFee.rentalAdjustments, 250);
   assert.equal(result.monthlyFee.final, 2950);
   assert.deepEqual(result.selectedOptions.map(option => option.name), ['Видеокамера для Cesar Home', 'SMS оповещение о взятии/снятии']);
+});
+
+test('duplicate selected option names are charged once in first-seen order', () => {
+  const result = engine().calculate(input({
+    selectedOptionNames: [
+      'SMS оповещение о взятии/снятии',
+      'SMS оповещение о взятии/снятии',
+      'EMAIL оповещение о взятии/снятии',
+    ],
+  }), catalogs);
+
+  assert.deepEqual(result.selectedOptions.map(option => option.name), [
+    'SMS оповещение о взятии/снятии',
+    'EMAIL оповещение о взятии/снятии',
+  ]);
+  assert.equal(result.monthlyFee.options, 400);
+  assert.equal(result.monthlyFee.final, 2390);
 });
 
 test('B2B selected camera option remains billable because B2C video transitions do not apply', () => {
