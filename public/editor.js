@@ -33,10 +33,10 @@
       }
     };
   }
-  function exportPayload(draft) {
+  function exportPayload(draft, includePresentation) {
     var source = draft || {}, proposal = source.proposal || {}, computed = proposal.computed || {}, object = source.object || {};
     var equipment = computed.equipment || {};
-    return {
+    var payload = {
       client: { name: proposal.client && proposal.client.name },
       object: { pin: object.pin, account: object.account, invoice: object.invoice, address: object.address },
       generatedAt: new Date().toISOString(),
@@ -44,9 +44,16 @@
       discountPercent: proposal.discountPercent,
       computed: {
         equipment: { subtotal: equipment.subtotal, discountAmount: equipment.discountAmount, afterDiscount: equipment.afterDiscount },
-        installation: finalOnly(computed.installation), oneTime: finalOnly(computed.oneTime), monthlyFee: finalOnly(computed.monthlyFee), materialLiability: finalOnly(computed.materialLiability)
+        installation: finalOnly(computed.installation), oneTime: finalOnly(computed.oneTime), monthlyFee: finalOnly(computed.monthlyFee), materialLiability: finalOnly(computed.materialLiability),
+        tariff: computed.tariff ? { resolvedName: computed.tariff.resolvedName } : {}
       }
     };
+    if (includePresentation) {
+      payload.selectedOptionNames = (proposal.selectedOptionNames || []).slice();
+      payload.promotions = (source.promotions || []).map(function (item) { return { title: item.title, description: item.description }; });
+      payload.manager = source.manager ? { name: source.manager.name, role: source.manager.role, phone: source.manager.phone, email: source.manager.email } : {};
+    }
+    return payload;
   }
   function downloadFilename(contentDisposition, fallback) {
     var header = String(contentDisposition || '');
@@ -409,7 +416,9 @@
     changes.forEach(function (change) { var note = document.createElement('p'); note.className = 'calculation-note'; note.textContent = 'Тариф изменён автоматически: ' + change.from + ' → ' + change.to + '. ' + change.reason + '.'; warnings.appendChild(note); });
     (computed.warnings || []).forEach(function (warning) { var note = document.createElement('p'); note.className = 'warning-item'; note.textContent = warning.message + ' Проверьте параметры расчёта.'; warnings.appendChild(note); });
     var pdfButton = document.getElementById('btnExportPdf');
-    pdfButton.disabled = true; pdfButton.setAttribute('aria-disabled', 'true'); pdfButton.title = 'PDF-предложение будет подключено на следующем этапе.';
+    var pdfEnabled = !editorBlocked && ProposalUI.isProposalValid(state.proposal);
+    pdfButton.disabled = !pdfEnabled; pdfButton.setAttribute('aria-disabled', pdfEnabled ? 'false' : 'true');
+    pdfButton.title = pdfEnabled ? 'Скачать отдельное PDF-предложение для каждой системы.' : 'Заполните обязательные поля и устраните ошибки расчёта.';
     var xlsxButton = document.getElementById('btnExportXlsx');
     var xlsxEnabled = !editorBlocked && ProposalUI.isProposalValid(state.proposal);
     xlsxButton.disabled = !xlsxEnabled;
@@ -641,19 +650,21 @@
   var linkInput = document.getElementById('linkInput');
   var linkOpen = document.getElementById('linkOpen');
   var btnGen = document.getElementById('btnGenerate');
+  var btnExportPdf = document.getElementById('btnExportPdf');
   var btnExportXlsx = document.getElementById('btnExportXlsx');
 
-  btnExportXlsx.addEventListener('click', function () {
+  function bindDocumentExport(button, settings) {
+    button.addEventListener('click', function () {
     if (editorBlocked) { showBlockedWarning(); return; }
     var validationErrors = ProposalUI.publicationErrors(state.proposal);
     if (validationErrors.length) { blockPublication(validationErrors[0]); return; }
-    var originalText = btnExportXlsx.textContent || 'Смета XLSX';
-    btnExportXlsx.disabled = true;
-    btnExportXlsx.setAttribute('aria-disabled', 'true');
-    btnExportXlsx.textContent = 'Готовим XLSX…';
-    fetch('/api/exports/xlsx', {
+    var originalText = button.textContent || settings.label;
+    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
+    button.textContent = settings.busy;
+    fetch(settings.endpoint, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ProposalUI.exportPayload(state))
+      body: JSON.stringify(ProposalUI.exportPayload(state, settings.includePresentation))
     }).then(function (response) {
       if (response.ok) return response.blob().then(function (blob) { return { blob: blob, response: response }; });
       return response.json().catch(function () { return {}; }).then(function (body) {
@@ -662,7 +673,7 @@
       });
     }).then(function (result) {
       var type = result.response.headers && result.response.headers.get('content-type') || '';
-      var fallback = type.indexOf('zip') !== -1 ? 'Сметы оборудования.zip' : 'Смета оборудования.xlsx';
+      var fallback = type.indexOf('zip') !== -1 ? settings.zipFallback : settings.fileFallback;
       var filename = ProposalUI.downloadFilename(result.response.headers && result.response.headers.get('content-disposition'), fallback);
       var url = URL.createObjectURL(result.blob);
       var anchor = document.createElement('a');
@@ -676,14 +687,18 @@
         }, 0);
       }
     }).catch(function (error) {
-      toast(error && error.message && error.status === 422 ? error.message : 'Не удалось выгрузить смету. Проверьте соединение и повторите попытку.');
+      toast(error && error.message && error.status === 422 ? error.message : settings.failure);
     }).finally(function () {
-      btnExportXlsx.textContent = originalText;
+      button.textContent = originalText;
       var enabled = !editorBlocked && ProposalUI.isProposalValid(state.proposal);
-      btnExportXlsx.disabled = !enabled;
-      btnExportXlsx.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      button.disabled = !enabled;
+      button.setAttribute('aria-disabled', enabled ? 'false' : 'true');
     });
-  });
+    });
+  }
+
+  bindDocumentExport(btnExportPdf, { label: 'PDF-предложение', busy: 'Готовим PDF…', endpoint: '/api/exports/pdf', includePresentation: true, fileFallback: 'Коммерческое предложение.pdf', zipFallback: 'Коммерческие предложения.zip', failure: 'Не удалось выгрузить PDF. Проверьте соединение и повторите попытку.' });
+  bindDocumentExport(btnExportXlsx, { label: 'Смета XLSX', busy: 'Готовим XLSX…', endpoint: '/api/exports/xlsx', fileFallback: 'Смета оборудования.xlsx', zipFallback: 'Сметы оборудования.zip', failure: 'Не удалось выгрузить смету. Проверьте соединение и повторите попытку.' });
 
   function createDialogController(dialog, settings) {
     var trigger = null, open = false, backgrounds = settings.backgrounds || [];

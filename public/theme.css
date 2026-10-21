@@ -2,7 +2,13 @@
    CESAR SATELLITE — фирменная тема отчётов
    Извлечено из коммерческого предложения (Figma) и брендбука.
    ============================================================ */
-@import url('https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap');
+@font-face {
+  font-family: 'Onest';
+  src: url('/fonts/Onest-Variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+}
 
 :root {
   --page: #eef1f5;

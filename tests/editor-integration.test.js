@@ -210,17 +210,47 @@ test('success dialog and mobile preview move focus, close on Escape, and restore
   assert.equal(previewTrigger.focused, true);
 });
 
-test('XLSX export enables only for a valid proposal while PDF stays disabled', () => {
+test('document exports enable only for a valid proposal', () => {
   const valid = createEditorHarness({
     promotions: [], events: [], object: { pin: '11', address: 'Москва' },
     proposal: { client: { name: 'ООО Тест' }, items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000 }] },
   });
   assert.equal(valid.elements.get('btnExportXlsx').disabled, false);
-  assert.equal(valid.elements.get('btnExportPdf').disabled, true);
+  assert.equal(valid.elements.get('btnExportPdf').disabled, false);
 
   const invalid = createEditorHarness({ promotions: [], events: [], proposal: { client: { name: '' }, items: [] } });
   assert.equal(invalid.elements.get('btnExportXlsx').disabled, true);
   assert.equal(invalid.elements.get('btnExportPdf').disabled, true);
+});
+
+test('PDF export posts public proposal content, downloads filename and safely revokes the blob URL', async () => {
+  const harness = createEditorHarness({
+    promotions: [{ id: 'p1', title: 'Два объекта выгоднее', description: 'Скидка', image: '/secret.webp', priority: 99 }], events: [], object: { pin: '11', address: 'Москва' },
+    manager: { name: 'Андрей', role: 'Менеджер', phone: '+7', email: 'a@example.test', photo: 'data:secret' },
+    proposal: { client: { name: 'ООО Тест' }, selectedOptionNames: ['Видеокамера для Cesar Home'], items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000, sourceInstalledUnitPrice: 900, priceOverridden: true }], overrides: { monthlyFeeOverride: 1 }, exportMetadata: { internal: true } },
+  }, { fetch: () => Promise.resolve({
+    ok: true,
+    headers: { get(name) { if (name.toLowerCase() === 'content-disposition') return "attachment; filename=\"proposal.pdf\"; filename*=UTF-8''%D0%9A%D0%9F%20%D0%A2%D0%B5%D1%81%D1%82.pdf"; if (name.toLowerCase() === 'content-type') return 'application/pdf'; return null; } },
+    blob: () => Promise.resolve(new Blob(['%PDF-test'], { type: 'application/pdf' })),
+  }), deferTimers: true });
+  const button = harness.elements.get('btnExportPdf');
+  button.click('click');
+  assert.equal(button.disabled, true);
+  assert.match(button.textContent, /Готовим/);
+  await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.fetchRequests[0].url, '/api/exports/pdf');
+  const json = JSON.stringify(harness.fetchBodies[0]);
+  assert.match(json, /Два объекта выгоднее/);
+  assert.match(json, /Видеокамера для Cesar Home/);
+  assert.match(json, /Андрей/);
+  ['sourceInstalledUnitPrice', 'priceOverridden', 'overrides', 'exportMetadata', 'priority', 'image', 'photo'].forEach(key => assert.doesNotMatch(json, new RegExp(`"${key}"`)));
+  const anchor = harness.createdElements.find(element => element.tagName === 'A');
+  assert.equal(anchor.download, 'КП Тест.pdf');
+  assert.equal(button.disabled, false);
+  assert.equal(harness.context.revokedObjectUrl, undefined);
+  harness.runTimers();
+  assert.equal(anchor.removed, true);
+  assert.equal(harness.context.revokedObjectUrl, 'blob:test');
 });
 
 test('XLSX export posts a minimal safe payload, downloads response filename and restores busy state', async () => {

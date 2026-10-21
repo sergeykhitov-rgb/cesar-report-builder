@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { ZipArchive } = require('archiver');
 const { MIME_XLSX, buildEstimateWorkbook, estimateFilename, uniqueEstimateFilenames, validateSystemId } = require('./lib/xlsx-export');
+const { MIME_PDF, buildProposalPdf, proposalFilename, uniqueProposalFilenames } = require('./lib/pdf-export');
 const { attachArchiveAbort } = require('./lib/archive-lifecycle');
 
 const PORT = process.env.PORT || 4600;
@@ -24,7 +25,8 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8', '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8', '.png': 'image/png',
-  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.ico': 'image/x-icon', '.webp': 'image/webp'
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.ico': 'image/x-icon', '.webp': 'image/webp',
+  '.ttf': 'font/ttf'
 };
 
 function send(res, code, body, headers) {
@@ -275,6 +277,43 @@ const server = http.createServer(function (req, res) {
           'Cache-Control': 'no-store',
           'Content-Type': 'application/zip',
           'Content-Disposition': attachmentHeader('estimates.zip', 'Сметы оборудования.zip'),
+        });
+        archive.pipe(res);
+        buffers.forEach(function (buffer, index) { archive.append(buffer, { name: names[index], date: new Date('2000-01-01T00:00:00.000Z') }); });
+        await archive.finalize();
+      } catch (error) { if (res.headersSent) res.destroy(error); else exportError(res, error); }
+    }).catch(function () { sendJSON(res, 413, { error: 'payload too large' }); });
+    return;
+  }
+
+  // --- API: отдельные PDF-предложения по системам ---
+  if (req.method === 'POST' && pathname === '/api/exports/pdf') {
+    readBody(req).then(async function (raw) {
+      var parsed;
+      try { parsed = JSON.parse(raw); } catch (e) { return sendJSON(res, 400, { error: 'bad json' }); }
+      try {
+        if (parsed && Array.isArray(parsed.items) && parsed.items.length > 200) {
+          var tooMany = new Error('items must contain 1..200 entries'); tooMany.code = 'INVALID_EXPORT'; tooMany.path = 'items'; throw tooMany;
+        }
+        var proposal = clean(parsed);
+        var groups = exportGroupsFromItems(proposal && proposal.items);
+        var buffers = await Promise.all(groups.map(function (group) { return buildProposalPdf(proposal, group); }));
+        if (groups.length === 1) {
+          return send(res, 200, buffers[0], {
+            'Content-Type': MIME_PDF,
+            'Content-Disposition': attachmentHeader('proposal.pdf', proposalFilename(proposal, groups[0])),
+            'Content-Length': buffers[0].length,
+          });
+        }
+        var names = uniqueProposalFilenames(proposal, groups);
+        var archive = new ZipArchive({ zlib: { level: 9 } });
+        var archiveLifecycle = attachArchiveAbort(req, res, archive);
+        if (archiveLifecycle.isAborted()) return;
+        archive.on('error', function (error) { if (!res.headersSent) exportError(res, error); else res.destroy(error); });
+        res.writeHead(200, {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/zip',
+          'Content-Disposition': attachmentHeader('proposals.zip', 'Коммерческие предложения.zip'),
         });
         archive.pipe(res);
         buffers.forEach(function (buffer, index) { archive.append(buffer, { name: names[index], date: new Date('2000-01-01T00:00:00.000Z') }); });

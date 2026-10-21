@@ -160,8 +160,7 @@ test('responsive and accessible contracts are explicit', () => {
 test('export controls start disabled and explain current availability honestly', () => {
   assert.match(html, /id="btnExportPdf"[^>]*disabled/);
   assert.match(html, /id="btnExportXlsx"[^>]*disabled/);
-  assert.match(html, /Смета XLSX доступна после заполнения обязательных полей\./);
-  assert.match(html, /PDF-предложение будет подключено на следующем этапе\./);
+  assert.match(html, /PDF-предложение и смета XLSX доступны после заполнения обязательных полей\./);
 });
 
 test('public projection strips every calculator-internal field', () => {

@@ -53,7 +53,15 @@ function exportPayload(items) {
     object: { pin: '7711', account: 'ЛС-1', invoice: 'Счёт-2', address: 'Москва' },
     generatedAt: '2026-10-21T09:00:00.000Z',
     items,
-    computed: { equipment: { afterDiscount: 1000 }, discountPercent: 0 },
+    discountPercent: 0,
+    computed: {
+      equipment: { subtotal: 1000, discountAmount: 0, afterDiscount: 1000 },
+      installation: { final: 500 }, oneTime: { final: 1500 }, monthlyFee: { final: 1000 }, materialLiability: { final: 50000 },
+      tariff: { resolvedName: 'Базовый' },
+    },
+    selectedOptionNames: ['Тревожная кнопка'],
+    promotions: [{ title: 'Выгодная предоплата', description: 'Скидка на охрану.' }],
+    manager: { name: 'Андрей Мешенков', role: 'Менеджер', phone: '+7 495 000-00-00', email: 'manager@example.test' },
   };
 }
 
@@ -332,4 +340,48 @@ test('POST xlsx rejects malformed exports with structured 400 or 422 and does no
   assert.match(tooMany.body.toString('utf8'), /1\.\.200|200/);
   const after = await request(port, '/');
   assert.equal(after.status, 200);
+});
+
+test('POST pdf returns one branded PDF with RFC5987 filename for one system', async t => {
+  const port = await startServer(t);
+  const response = await postJSON(port, '/api/exports/pdf', exportPayload([
+    { system: 'ritm', systemLabel: 'РИТМ', code: 'R-1', name: 'Панель', quantity: 1, installedUnitPrice: 1000 },
+  ]));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-type'], 'application/pdf');
+  assert.match(response.headers['content-disposition'], /^attachment; filename="proposal\.pdf"; filename\*=UTF-8''/);
+  assert.equal(response.body.subarray(0, 5).toString('ascii'), '%PDF-');
+});
+
+test('POST pdf derives groups server-side and returns one PDF per system in a ZIP', async t => {
+  const port = await startServer(t);
+  const payload = exportPayload([
+    { system: 'ritm', systemLabel: 'РИТМ', code: 'R-1', name: 'Панель', quantity: 1, installedUnitPrice: 1000 },
+    { system: 'hikvision', systemLabel: 'ОхранаВидео', code: 'H-1', name: 'Камера', quantity: 1, installedUnitPrice: 2000 },
+  ]);
+  payload.exportGroups = [{ id: 'evil', label: 'Подмена' }];
+  payload.rawCatalogs = [{ secret: true }];
+  payload.overrideReason = 'secret';
+  const response = await postJSON(port, '/api/exports/pdf', payload);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-type'], 'application/zip');
+  assert.match(response.headers['content-disposition'], /^attachment; filename="proposals\.zip"; filename\*=UTF-8''/);
+  const archive = await unzipper.Open.buffer(response.body);
+  assert.equal(archive.files.length, 2);
+  archive.files.forEach(file => assert.ok(file.path.endsWith('.pdf')));
+  for (const file of archive.files) assert.equal((await file.buffer()).subarray(0, 5).toString('ascii'), '%PDF-');
+});
+
+test('POST pdf rejects unsafe systems and invalid numeric totals without crashing', async t => {
+  const port = await startServer(t);
+  const unsafe = await postJSON(port, '/api/exports/pdf', exportPayload([
+    { system: '../ritm', systemLabel: 'РИТМ', code: 'R-1', name: 'Панель', quantity: 1, installedUnitPrice: 1000 },
+  ]));
+  assert.equal(unsafe.status, 422);
+  const invalid = exportPayload([{ system: 'ritm', systemLabel: 'РИТМ', code: 'R-1', name: 'Панель', quantity: 1, installedUnitPrice: 1000 }]);
+  invalid.computed.monthlyFee.final = Infinity;
+  const invalidResponse = await postJSON(port, '/api/exports/pdf', invalid);
+  assert.equal(invalidResponse.status, 422);
+  assert.match(invalidResponse.body.toString('utf8'), /monthlyFee|finite|amount/i);
+  assert.equal((await request(port, '/')).status, 200);
 });
