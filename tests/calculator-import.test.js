@@ -1,10 +1,59 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
 
 const calculator = JSON.parse(fs.readFileSync('data/catalogs/calculator.json', 'utf8'));
 const equipment = JSON.parse(fs.readFileSync('data/catalogs/equipment.json', 'utf8'));
 const manifest = JSON.parse(fs.readFileSync('data/catalogs/import-manifest.json', 'utf8'));
+
+function runDuplicateConflict(field, firstValue, secondValue) {
+  const script = String.raw`
+import importlib.util
+import pathlib
+
+path = pathlib.Path('scripts/import-calculator-data.py')
+spec = importlib.util.spec_from_file_location('calculator_import', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+base = {
+    'system': 'ritm',
+    'systemLabel': 'Ритм',
+    'code': 'TEST-42',
+    'name': 'Датчик',
+    'model': 'A1',
+    'unit': 'шт.',
+    'installedUnitPrice': 100,
+}
+first = {**base, ${JSON.stringify(field)}: ${JSON.stringify(firstValue)}, 'source': {
+    'workbook': 'template.xls', 'sheet': 'Sheet A', 'row': 11,
+}}
+second = {**base, ${JSON.stringify(field)}: ${JSON.stringify(secondValue)}, 'source': {
+    'workbook': 'template.xls', 'sheet': 'Sheet B', 'row': 19,
+}}
+module.deduplicate_equipment([first, second])
+`;
+  return spawnSync('python3', ['-c', script], { encoding: 'utf8' });
+}
+
+test('importer rejects duplicate equipment keys with different names and reports both sources', () => {
+  const result = runDuplicateConflict('name', 'Датчик дыма', 'Датчик воды');
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /ritm.*TEST-42/s);
+  assert.match(result.stderr, /Sheet A.*row 11/s);
+  assert.match(result.stderr, /Sheet B.*row 19/s);
+  assert.match(result.stderr, /name/);
+});
+
+test('importer rejects duplicate equipment keys with different models', () => {
+  const result = runDuplicateConflict('model', 'A1', 'B2');
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /ritm.*TEST-42/s);
+  assert.match(result.stderr, /model/);
+});
 
 test('calculator catalog contains every required source section and control values', () => {
   const requiredSections = [

@@ -24,6 +24,92 @@ SYSTEM_LABELS = {
 }
 STOCK_SHEETS = {"13.08.26", "13.08.26 2725"}
 
+# These inventory codes describe the same sellable item in several specification
+# sheets, but the workbook editors used annotations or omitted a model in some
+# copies. Only the exact reviewed variants below may share a stable key. A new
+# spelling or model is treated as a conflict instead of being silently merged.
+EQUIPMENT_VARIANT_ALLOWLIST = {
+    ("si-nord", "91068"): {
+        "canonical": ("Комплект Выгодный дом Си-Норд (панель, клав, СМК, 2ИК, Брелок, 1ДУВ, ТЕМП, ДИП, АНТ)", "Норд-GSM"),
+        "variants": {
+            ("Комплект Выгодный дом Си-Норд (панель, клав, СМК, 2ИК, Брелок, ДУВ, ТЕМП, ДИП, АНТ)", "Норд-GSM"),
+            ("Комплект Выгодный дом Си-Норд (панель, клав, СМК, 2ИК, Брелок, 1ДУВ, ТЕМП, ДИП, АНТ)", "Норд-GSM"),
+        },
+    },
+    ("si-nord", "64495"): {
+        "canonical": ("Адаптер СИ-НОРД, Ethemet", "Ethemet"),
+        "variants": {(я, м) for я, м in [
+            ("Адаптер СИ-НОРД, Ethemet", ""),
+            ("Адаптер СИ-НОРД, Ethemet", "Ethemet"),
+        ]},
+    },
+    ("si-nord", "98957"): {
+        "canonical": ("Ящик с кодовым механизмом - сейф-бокс для ключей", "Сейф-бокс"),
+        "variants": {(я, м) for я, м in [
+            ("Ящик с кодовым механизмом - сейф-бокс для ключей", ""),
+            ("Ящик с кодовым механизмом - сейф-бокс для ключей", "Сейф-бокс"),
+        ]},
+    },
+    ("hikvision", "108840"): {
+        "canonical": ("Датчик ИК беспроводной, защита от животных Hikvision, DS-PDP15P-EG2-WE,", "PIR"),
+        "variants": {(я, "PIR") for я in [
+            "Датчик ИК беспроводной, защита от животных Hikvision, DS-PDP15P-EG2-WE,",
+            "Датчик ИК беспроводной, защита от животных Hikvision, DS-PDP15P-EG2-WE, ТРИ ВАРИАНТА ЗАМЕНЫ НИЖЕ",
+        ]},
+    },
+    ("hikvision", "103206"): {
+        "canonical": ("Датчик протечки воды (AX PRO) Hikvision, DS-PDWL-E-WE,", "WaterLeak"),
+        "variants": {(я, "WaterLeak") for я in [
+            "Датчик протечки воды (AX PRO) Hikvision, DS-PDWL-E-WE,",
+            "Датчик протечки воды (AX PRO) Hikvision, DS-PDWL-E-WE, ВАРИАНТ ЗАМЕНЫ НИЖЕ",
+        ]},
+    },
+    ("hikvision", "108841"): {
+        "canonical": ("Извещатель пожар, дымовой Hikvision, DS-PDSMK-S-WE,", "Smoke"),
+        "variants": {(я, "Smoke") for я in [
+            "Извещатель пожар, дымовой Hikvision, DS-PDSMK-S-WE,",
+            "Извещатель пожар, дымовой Hikvision, DS-PDSMK-S-WE, вариант для панелей RU ниже",
+        ]},
+    },
+    ("hikvision", "108844"): {
+        "canonical": ("Датчик СМК беспроводной Hikvision, DS-PDMC-EG2-WE,", "Door"),
+        "variants": {(я, "Door") for я in [
+            "Датчик СМК беспроводной Hikvision, DS-PDMC-EG2-WE,",
+            "Датчик СМК беспроводной Hikvision, DS-PDMC-EG2-WE, ВАРИАНТ ЗАМЕНЫ НИЖЕ",
+        ]},
+    },
+    ("si-nord", "89012"): {
+        "canonical": ("Датчик температурный СИ-НОРД, выносной, проводной", "выносной"),
+        "variants": {(я, м) for я, м in [
+            ("Датчик температурный СИ-НОРД, выносной, проводной", ""),
+            ("Датчик температурный СИ-НОРД, выносной, проводной", "выносной"),
+        ]},
+    },
+    ("si-nord", "100334"): {
+        "canonical": ("Расширитель СИ-НОРД охранный, ЕХ81", "ЕХ81"),
+        "variants": {(
+            "Расширитель СИ-НОРД, ЕХ81 проводных шлейфов", ""
+        ), (
+            "Расширитель СИ-НОРД охранный, ЕХ81", "ЕХ81"
+        )},
+    },
+    ("si-nord", "102022"): {
+        "canonical": ("Расширитель СИ-НОРД пожарный, ЕХ22", "ЕХ22"),
+        "variants": {(
+            "Расширитель СИ-НОРД, ЕХ22 пожарных шлейфов", ""
+        ), (
+            "Расширитель СИ-НОРД пожарный, ЕХ22", "ЕХ22"
+        )},
+    },
+    ("si-nord", "64491"): {
+        "canonical": ("Датчик магнитоконтактный СИ-НОРД, СН-СМК исп.1", "СН-СМК"),
+        "variants": {(я, "СН-СМК") for я in [
+            "Датчик магнитоконтактный СИ-НОРД, СН-СМК исп.1",
+            "Датчик магнитоконтактный СИ-НОРД, СН-СМК исп.1 (большой,ПРД для подключения стороннего оборудования)",
+        ]},
+    },
+}
+
 
 def normalize_text(value: Any) -> str:
     if value is None:
@@ -303,19 +389,34 @@ def deduplicate_equipment(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
     items: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         key = (row["system"], row["code"])
+        allowed = EQUIPMENT_VARIANT_ALLOWLIST.get(key)
+        variant = (row["name"], row["model"])
         current = items.get(key)
         if current is None:
+            if allowed and variant not in allowed["variants"]:
+                source = row["source"]
+                raise ValueError(
+                    f"unreviewed equipment variant {key!r} in "
+                    f"{source['workbook']} / {source['sheet']} row {source['row']}: name, model"
+                )
             item = {key: value for key, value in row.items() if key != "source"}
+            if allowed:
+                item["name"], item["model"] = allowed["canonical"]
             item["sources"] = [row["source"]]
             items[key] = item
             continue
-        commercial_fields = ("unit", "installedUnitPrice")
+        commercial_fields = ("name", "model", "unit", "installedUnitPrice")
         conflicts = [field for field in commercial_fields if current[field] != row[field]]
+        if allowed and variant in allowed["variants"]:
+            conflicts = [field for field in conflicts if field not in ("name", "model")]
         if conflicts:
+            first_source = current["sources"][0]
             source = row["source"]
             raise ValueError(
-                f"conflicting duplicate equipment key {key!r} in "
-                f"{source['sheet']} row {source['row']}: {', '.join(conflicts)}"
+                f"conflicting duplicate equipment key {key!r}: {', '.join(conflicts)}; "
+                f"first source {first_source['workbook']} / {first_source['sheet']} "
+                f"row {first_source['row']}; conflicting source "
+                f"{source['workbook']} / {source['sheet']} row {source['row']}"
             )
         provenance = row["source"]
         if provenance not in current["sources"]:
