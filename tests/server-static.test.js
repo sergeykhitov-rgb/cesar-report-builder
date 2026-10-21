@@ -170,19 +170,19 @@ test('POST reports stores only the server-side public report allowlist', async t
     promotions: [{ title: 'Скидка', description: 'Для клиента', image: photo, internalFlag: true }],
     proposal: {
       client: { name: 'ООО Клиент', phone: '+7 999 000-00-00', email: 'mail@example.test', internalId: 42 },
-      scenario: { segment: 'B2B', region: 'Москва', objectType: 'Офис', tariff: 'Бизнес', rent: false, source: 'catalog' },
+      scenario: { segment: 'B2B', region: 'Москва и МО, ЦФО', objectType: 'Офис', tariff: 'Бизнес-5000', rent: false, source: 'catalog' },
       items: [{
-        system: 'ritm', systemLabel: 'Охрана', code: 'A-1', name: 'Датчик', model: 'X', unit: 'шт.',
+        system: 'hikvision', systemLabel: 'Охрана', code: '100118', name: 'Датчик', model: 'X', unit: 'компл.',
         quantity: 2, installedUnitPrice: 1500, lineTotal: 3000,
         sourceInstalledUnitPrice: 1200, priceOverridden: true, overrideReason: 'secret', sourceRows: [7], unknownItem: 'secret',
       }],
-      selectedOptionNames: ['Реагирование'], discountPercent: 12.5,
+      selectedOptionNames: ['Техническое обслуживание'], discountPercent: 12.5,
       computed: {
-        equipment: { subtotal: 3200, discountAmount: 200, afterDiscount: 3000, source: 'formula' },
+        equipment: { subtotal: 3000, discountAmount: 375, afterDiscount: 2625, source: 'formula' },
         installation: { final: 5000, override: 1, overrideReason: 'secret' },
-        oneTime: { final: 8000, unknownTotal: 1 },
+        oneTime: { final: 7625, unknownTotal: 1 },
         monthlyFee: { final: 2500 }, materialLiability: { final: 100000 },
-        tariff: { resolvedName: 'Бизнес', rawCatalog: { secret: true } },
+        tariff: { resolvedName: 'Бизнес-5000', rawCatalog: { secret: true } },
         warnings: ['internal warning'], unknownComputed: true,
       },
       overrides: { installation: 1 }, rawCatalogs: [{ secret: true }], provenance: 'xlsx', unknownProposal: true,
@@ -204,11 +204,11 @@ test('POST reports stores only the server-side public report allowlist', async t
   assert.equal(report.manager.photo, photo);
   assert.equal(report.promotions[0].image, photo);
   assert.deepEqual(report.proposal.items[0], {
-    system: 'ritm', systemLabel: 'Охрана', code: 'A-1', name: 'Датчик', model: 'X', unit: 'шт.',
+    system: 'hikvision', systemLabel: 'Hikvision', code: '100118', name: 'Фотореле PMS, PR 601 2200Вт', model: 'Фотореле', unit: 'шт.',
     quantity: 2, installedUnitPrice: 1500, lineTotal: 3000,
   });
   assert.equal(report.proposal.computed.installation.final, 5000);
-  assert.equal(report.proposal.computed.tariff.resolvedName, 'Бизнес');
+  assert.equal(report.proposal.computed.tariff.resolvedName, 'Бизнес-5000');
   assert.equal(report.proposal.discountPercent, 12.5);
 
   const serialized = JSON.stringify(report);

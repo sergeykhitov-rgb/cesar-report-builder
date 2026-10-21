@@ -11,6 +11,8 @@ const { ZipArchive } = require('archiver');
 const { MIME_XLSX, buildEstimateWorkbook, estimateFilename, uniqueEstimateFilenames, validateSystemId } = require('./lib/xlsx-export');
 const { MIME_PDF, buildProposalPdf, proposalFilename, uniqueProposalFilenames, normalizeProposal } = require('./lib/pdf-export');
 const { attachArchiveAbort } = require('./lib/archive-lifecycle');
+const EQUIPMENT_CATALOG = require('./data/catalogs/equipment.json');
+const CALCULATOR_CATALOG = require('./data/catalogs/calculator.json');
 
 const PORT = process.env.PORT || 4600;
 const ROOT = __dirname;
@@ -70,7 +72,36 @@ function exportError(res, error) {
   return sendJSON(res, 500, { error: 'export failed' });
 }
 function safeId(id) { return /^[a-zA-Z0-9_-]{4,40}$/.test(id) ? id : null; }
-function genId() { return crypto.randomBytes(6).toString('hex'); }
+const REPORT_ID_SEQUENCE = String(process.env.REPORT_ID_SEQUENCE || '').split(',').map(function (value) { return value.trim(); }).filter(safeId);
+function genId() { return REPORT_ID_SEQUENCE.length ? REPORT_ID_SEQUENCE.shift() : crypto.randomBytes(6).toString('hex'); }
+
+async function persistReport(data) {
+  for (var attempt = 0; attempt < 10; attempt += 1) {
+    var id = genId();
+    var finalPath = path.join(DATA, id + '.json');
+    var tempPath = path.join(DATA, '.' + id + '-' + crypto.randomBytes(8).toString('hex') + '.tmp');
+    var handle;
+    try {
+      var stored = Object.assign({}, data, { id: id, createdAt: new Date().toISOString() });
+      handle = await fs.promises.open(tempPath, 'wx', 0o600);
+      await handle.writeFile(JSON.stringify(stored), 'utf8');
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await fs.promises.link(tempPath, finalPath);
+      await fs.promises.unlink(tempPath);
+      return stored;
+    } catch (error) {
+      if (handle) { try { await handle.close(); } catch (closeError) {} }
+      try { await fs.promises.unlink(tempPath); } catch (unlinkError) { if (unlinkError.code !== 'ENOENT') console.error(unlinkError); }
+      if (error && error.code === 'EEXIST') continue;
+      throw error;
+    }
+  }
+  var collisionError = new Error('report id allocation failed');
+  collisionError.code = 'REPORT_ID_COLLISION';
+  throw collisionError;
+}
 
 function encodingQuality(header, encoding) {
   var explicit = null, wildcard = null;
@@ -212,8 +243,14 @@ function publicReportPayload(input) {
       client: fields(proposal.client, ['name', 'phone', 'email']),
       scenario: fields(proposal.scenario, ['segment', 'region', 'objectType', 'tariff', 'rent', 'label']),
       items: list(proposal.items, function (item) {
-        return item && typeof item === 'object' && !Array.isArray(item)
-          ? fields(item, ['system', 'systemLabel', 'code', 'name', 'model', 'unit', 'quantity', 'installedUnitPrice', 'lineTotal']) : null;
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+        var trusted = EQUIPMENT_BY_KEY.get(item.system + '\u0000' + item.code);
+        if (!trusted) return null;
+        return {
+          system: trusted.system, systemLabel: trusted.systemLabel, code: trusted.code, name: trusted.name,
+          model: trusted.model, unit: trusted.unit, quantity: item.quantity,
+          installedUnitPrice: item.installedUnitPrice, lineTotal: item.lineTotal
+        };
       }),
       selectedOptionNames: stringList(proposal.selectedOptionNames),
       discountPercent: nonnegativeNumber(proposal.discountPercent),
@@ -261,8 +298,89 @@ function proposalValidationErrors(data) {
 }
 
 const KNOWN_PROPOSAL_SYSTEMS = new Set(['ritm', 'hikvision', 'si-nord', 'rental-used']);
+const EQUIPMENT_BY_KEY = new Map(EQUIPMENT_CATALOG.items.map(function (item) { return [item.system + '\u0000' + item.code, item]; }));
 const MAX_PROPOSAL_ITEMS = 200;
 const MAX_PROPOSAL_MONEY = 1e12;
+const MAX_IMAGE_LENGTH = 10 * 1024 * 1024;
+
+function moneyCents(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  var parts = String(value).split('e');
+  var shifted = Number(parts[0] + 'e' + (Number(parts[1] || 0) + 2));
+  var cents = Math.round(shifted);
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
+function percentageCents(cents, percent) {
+  if (!Number.isSafeInteger(cents) || typeof percent !== 'number' || !Number.isFinite(percent) || percent < 0) return null;
+  var match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(String(percent));
+  if (!match) return null;
+  var fraction = match[2] || '';
+  var scale = fraction.length - Number(match[3] || 0);
+  var numerator = BigInt(match[1] + fraction);
+  if (scale < 0) { numerator *= 10n ** BigInt(-scale); scale = 0; }
+  var denominator = (10n ** BigInt(scale)) * 100n;
+  var product = BigInt(cents) * numerator;
+  var rounded = (product + denominator / 2n) / denominator;
+  return rounded <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(rounded) : null;
+}
+
+function reportInputValidationErrors(data) {
+  var errors = [];
+  function error(code, pathName, message) { errors.push({ code: code, path: pathName, message: message }); }
+  function object(value, pathName, optional) {
+    if (value === undefined && optional) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) { error('INVALID_TYPE', pathName, 'Ожидается объект.'); return null; }
+    return value;
+  }
+  function string(value, pathName, max, optional) {
+    if (value === undefined && optional) return;
+    if (typeof value !== 'string') { error('INVALID_TYPE', pathName, 'Ожидается строка.'); return; }
+    if (value.length > max) error('TOO_LONG', pathName, 'Значение слишком длинное.');
+  }
+  function image(value, pathName) { string(value, pathName, MAX_IMAGE_LENGTH, true); }
+  function shortScalar(value, pathName, max) {
+    if (value === undefined) return;
+    if (typeof value === 'number' && Number.isFinite(value)) return;
+    string(value, pathName, max, false);
+  }
+  function fields(record, pathName, schema) {
+    if (!record) return;
+    Object.keys(schema).forEach(function (key) { string(record[key], pathName + '.' + key, schema[key], true); });
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) { error('INVALID_TYPE', 'report', 'Ожидается объект отчёта.'); return errors; }
+  ['title', 'objectTitle', 'eventsTitle'].forEach(function (key) { string(data[key], key, 500, true); });
+  string(data.subtitle, 'subtitle', 1000, true);
+  string(data.disclaimer, 'disclaimer', 5000, true);
+  image(data.heroPhoto, 'heroPhoto');
+  fields(object(data.object, 'object', true), 'object', { pin: 200, owner: 500, brand: 300, model: 300, plate: 100, address: 2000 });
+  var summary = object(data.summary, 'summary', true);
+  if (summary) {
+    shortScalar(summary.alarms, 'summary.alarms', 100);
+    shortScalar(summary.incidents, 'summary.incidents', 100);
+    fields(summary, 'summary', { alarmsLabel: 500, incidentsLabel: 500, extraLabel: 500 });
+  }
+  var manager = object(data.manager, 'manager', true);
+  fields(manager, 'manager', { label: 500, name: 500, role: 500, phone: 100, email: 300 });
+  if (manager) image(manager.photo, 'manager.photo');
+  [['events', 200], ['promotions', 100]].forEach(function (entry) {
+    var collection = data[entry[0]];
+    if (collection === undefined) return;
+    if (!Array.isArray(collection)) { error('INVALID_TYPE', entry[0], 'Ожидается массив.'); return; }
+    if (collection.length > entry[1]) error('TOO_MANY_ITEMS', entry[0], 'Слишком много элементов.');
+  });
+  if (Array.isArray(data.events)) data.events.slice(0, 200).forEach(function (event, index) {
+    var pathName = 'events.' + index, row = object(event, pathName, false);
+    fields(row, pathName, { signal: 500, date: 100, time: 100, address: 2000, note: 5000 });
+    if (row) image(row.photo, pathName + '.photo');
+  });
+  if (Array.isArray(data.promotions)) data.promotions.slice(0, 100).forEach(function (promotion, index) {
+    var pathName = 'promotions.' + index, row = object(promotion, pathName, false);
+    fields(row, pathName, { title: 500, description: 5000 });
+    if (row) image(row.image, pathName + '.image');
+  });
+  return errors;
+}
 
 function proposalInputValidationErrors(data) {
   if (!data || !Object.prototype.hasOwnProperty.call(data, 'proposal')) return [];
@@ -344,7 +462,45 @@ function proposalInputValidationErrors(data) {
     money(total.final, 'proposal.computed.' + key + '.final');
   });
   var tariff = record(computed.tariff, 'proposal.computed.tariff');
-  string(tariff.resolvedName, 'proposal.computed.tariff.resolvedName', { max: 200 });
+  string(tariff.resolvedName, 'proposal.computed.tariff.resolvedName', { required: true, max: 200 });
+
+  if (!errors.length) {
+    var subtotalCents = 0;
+    proposal.items.forEach(function (item, index) {
+      var base = 'proposal.items.' + index;
+      if (!EQUIPMENT_BY_KEY.has(item.system + '\u0000' + item.code)) error('UNKNOWN_ITEM', base + '.code', 'Позиция отсутствует в каталоге оборудования.');
+      var lineCents = moneyCents(item.lineTotal);
+      var expectedLine = moneyCents(item.installedUnitPrice * item.quantity);
+      if (!Number.isSafeInteger(expectedLine) || expectedLine !== lineCents) error('INCONSISTENT_TOTAL', base + '.lineTotal', 'Сумма позиции не соответствует количеству и цене.');
+      else {
+        subtotalCents += lineCents;
+        if (!Number.isSafeInteger(subtotalCents)) error('INVALID_NUMBER', 'proposal.computed.equipment.subtotal', 'Сумма оборудования слишком велика.');
+      }
+    });
+    var suppliedSubtotal = moneyCents(equipment.subtotal);
+    if (Number.isSafeInteger(subtotalCents) && suppliedSubtotal !== subtotalCents) error('INCONSISTENT_TOTAL', 'proposal.computed.equipment.subtotal', 'Итог оборудования не равен сумме позиций.');
+    var expectedDiscount = percentageCents(subtotalCents, proposal.discountPercent);
+    if (!Number.isSafeInteger(expectedDiscount) || moneyCents(equipment.discountAmount) !== expectedDiscount) error('INCONSISTENT_TOTAL', 'proposal.computed.equipment.discountAmount', 'Сумма скидки не соответствует проценту скидки.');
+    var expectedAfterDiscount = subtotalCents - expectedDiscount;
+    if (moneyCents(equipment.afterDiscount) !== expectedAfterDiscount) error('INCONSISTENT_TOTAL', 'proposal.computed.equipment.afterDiscount', 'Итог после скидки рассчитан неверно.');
+    var installationCents = moneyCents(computed.installation.final);
+    if (!Number.isSafeInteger(expectedAfterDiscount + installationCents) || moneyCents(computed.oneTime.final) !== expectedAfterDiscount + installationCents) error('INCONSISTENT_TOTAL', 'proposal.computed.oneTime.final', 'Разовый платёж не равен оборудованию после скидки и монтажу.');
+
+    var allowedOptions = new Set(CALCULATOR_CATALOG.options.filter(function (option) { return String(option.category).toUpperCase() === scenario.segment; }).map(function (option) { return option.name; }));
+    proposal.selectedOptionNames.forEach(function (name, index) { if (!allowedOptions.has(name)) error('INVALID_OPTION', 'proposal.selectedOptionNames.' + index, 'Опция недоступна для выбранного сегмента.'); });
+    var tariffRows = scenario.segment === 'B2B' ? CALCULATOR_CATALOG.b2bTariffs : (scenario.rent ? CALCULATOR_CATALOG.b2cRentalTariffs : CALCULATOR_CATALOG.b2cTariffs);
+    var matchingTariffs = tariffRows.filter(function (row) {
+      return row.region === scenario.region && (scenario.segment === 'B2B' || row.objectType === scenario.objectType);
+    });
+    var selectedTariffNames = new Set(matchingTariffs.map(function (row) { return row.name; }));
+    if (!selectedTariffNames.has(scenario.tariff)) error('INVALID_TARIFF', 'proposal.scenario.tariff', 'Выбранный тариф недоступен для сценария.');
+    var resolvedTariffs = matchingTariffs;
+    if (scenario.segment === 'B2C' && scenario.rent) {
+      resolvedTariffs = resolvedTariffs.concat(CALCULATOR_CATALOG.b2cTariffs.filter(function (row) { return row.region === scenario.region && row.objectType === scenario.objectType; }));
+    }
+    var resolvedTariffNames = new Set(resolvedTariffs.map(function (row) { return row.name; }));
+    if (!resolvedTariffNames.has(tariff.resolvedName)) error('INVALID_TARIFF', 'proposal.computed.tariff.resolvedName', 'Тариф недоступен для выбранного сценария.');
+  }
   return errors;
 }
 
@@ -451,20 +607,21 @@ const server = http.createServer(function (req, res) {
 
   // --- API: создать отчёт ---
   if (req.method === 'POST' && pathname === '/api/reports') {
-    readBody(req).then(function (raw) {
+    readBody(req).then(async function (raw) {
       var data;
       try { data = JSON.parse(raw); } catch (e) { return sendJSON(res, 400, { error: 'bad json' }); }
-      var inputErrors = proposalInputValidationErrors(data);
+      var inputErrors = reportInputValidationErrors(data).concat(proposalInputValidationErrors(data));
       if (inputErrors.length) return sendJSON(res, 422, { error: 'invalid proposal', errors: inputErrors });
       data = publicReportPayload(clean(data));
       var validationErrors = proposalValidationErrors(data);
       if (validationErrors.length) return sendJSON(res, 422, { error: 'invalid proposal', errors: validationErrors });
-      data.id = genId();
-      data.createdAt = new Date().toISOString();
-      fs.writeFile(path.join(DATA, data.id + '.json'), JSON.stringify(data), function (err) {
-        if (err) { console.error(err); return sendJSON(res, 500, { error: 'write failed' }); }
-        sendJSON(res, 200, { id: data.id });
-      });
+      try {
+        var stored = await persistReport(data);
+        sendJSON(res, 200, { id: stored.id });
+      } catch (error) {
+        console.error(error);
+        sendJSON(res, 500, { error: 'write failed' });
+      }
     }).catch(function () { sendJSON(res, 413, { error: 'payload too large' }); });
     return;
   }
