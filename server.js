@@ -89,7 +89,11 @@ async function persistReport(data) {
       await handle.close();
       handle = null;
       await fs.promises.link(tempPath, finalPath);
-      await fs.promises.unlink(tempPath);
+      try {
+        await fs.promises.unlink(tempPath);
+      } catch (unlinkError) {
+        if (unlinkError.code !== 'ENOENT') console.error('report temp cleanup failed:', unlinkError);
+      }
       return stored;
     } catch (error) {
       if (handle) { try { await handle.close(); } catch (closeError) {} }
