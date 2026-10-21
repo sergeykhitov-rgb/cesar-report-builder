@@ -297,7 +297,12 @@ const server = http.createServer(function (req, res) {
         }
         var proposal = clean(parsed);
         var groups = exportGroupsFromItems(proposal && proposal.items);
-        var buffers = await Promise.all(groups.map(function (group) { return buildProposalPdf(proposal, group); }));
+        // PDFKit shares font/image caches internally; build branded documents in sequence
+        // so page headers cannot bleed between concurrently rendered proposals.
+        var buffers = [];
+        for (var pdfIndex = 0; pdfIndex < groups.length; pdfIndex += 1) {
+          buffers.push(await buildProposalPdf(proposal, groups[pdfIndex]));
+        }
         if (groups.length === 1) {
           return send(res, 200, buffers[0], {
             'Content-Type': MIME_PDF,

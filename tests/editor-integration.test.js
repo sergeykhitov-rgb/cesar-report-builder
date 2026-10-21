@@ -227,7 +227,7 @@ test('PDF export posts public proposal content, downloads filename and safely re
   const harness = createEditorHarness({
     promotions: [{ id: 'p1', title: 'Два объекта выгоднее', description: 'Скидка', image: '/secret.webp', priority: 99 }], events: [], object: { pin: '11', address: 'Москва' },
     manager: { name: 'Андрей', role: 'Менеджер', phone: '+7', email: 'a@example.test', photo: 'data:secret' },
-    proposal: { client: { name: 'ООО Тест' }, selectedOptionNames: ['Видеокамера для Cesar Home'], items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000, sourceInstalledUnitPrice: 900, priceOverridden: true }], overrides: { monthlyFeeOverride: 1 }, exportMetadata: { internal: true } },
+    proposal: { client: { name: 'ООО Тест', phone: '+7', email: 'mail@example.test' }, selectedOptionNames: ['Видеокамера для Cesar Home'], items: [{ system: 'ritm', systemLabel: 'РИТМ', code: '1', name: 'Датчик', quantity: 1, installedUnitPrice: 1000, sourceInstalledUnitPrice: 900, priceOverridden: true }], overrides: { monthlyFeeOverride: 1 }, exportMetadata: { internal: true } },
   }, { fetch: () => Promise.resolve({
     ok: true,
     headers: { get(name) { if (name.toLowerCase() === 'content-disposition') return "attachment; filename=\"proposal.pdf\"; filename*=UTF-8''%D0%9A%D0%9F%20%D0%A2%D0%B5%D1%81%D1%82.pdf"; if (name.toLowerCase() === 'content-type') return 'application/pdf'; return null; } },
@@ -243,6 +243,8 @@ test('PDF export posts public proposal content, downloads filename and safely re
   assert.match(json, /Два объекта выгоднее/);
   assert.match(json, /Видеокамера для Cesar Home/);
   assert.match(json, /Андрей/);
+  assert.match(json, /"phone":"\+7"/);
+  assert.match(json, /"email":"mail@example\.test"/);
   ['sourceInstalledUnitPrice', 'priceOverridden', 'overrides', 'exportMetadata', 'priority', 'image', 'photo'].forEach(key => assert.doesNotMatch(json, new RegExp(`"${key}"`)));
   const anchor = harness.createdElements.find(element => element.tagName === 'A');
   assert.equal(anchor.download, 'КП Тест.pdf');

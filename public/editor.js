@@ -49,6 +49,8 @@
       }
     };
     if (includePresentation) {
+      payload.client.phone = proposal.client && proposal.client.phone;
+      payload.client.email = proposal.client && proposal.client.email;
       payload.selectedOptionNames = (proposal.selectedOptionNames || []).slice();
       payload.promotions = (source.promotions || []).map(function (item) { return { title: item.title, description: item.description }; });
       payload.manager = source.manager ? { name: source.manager.name, role: source.manager.role, phone: source.manager.phone, email: source.manager.email } : {};

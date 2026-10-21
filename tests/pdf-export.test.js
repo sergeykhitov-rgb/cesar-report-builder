@@ -11,6 +11,7 @@ const {
   buildProposalPdf,
   proposalFilename,
   uniqueProposalFilenames,
+  normalizeProposal,
 } = require('../lib/pdf-export');
 
 function fixture(overrides = {}) {
@@ -92,4 +93,41 @@ test('PDF builder rejects unknown systems, invalid numbers and mismatched groups
   await assert.rejects(() => buildProposalPdf(fixture({ items: [{ system: '../ritm', code: '1', name: 'Панель', quantity: 1, installedUnitPrice: 1 }] }), group()), /known catalog ID/i);
   await assert.rejects(() => buildProposalPdf(fixture({ items: [{ system: 'ritm', code: '1', name: 'Панель', quantity: 1_000_001, installedUnitPrice: 1 }] }), group()), /quantity/i);
   await assert.rejects(() => buildProposalPdf(fixture(), group('si-nord', 'Си-Норд')), /match group/i);
+});
+
+test('each equipment system receives its own discounted equipment and one-time totals', () => {
+  const proposal = fixture();
+  const ritm = normalizeProposal(proposal, group('ritm', 'РИТМ'));
+  const video = normalizeProposal(proposal, group('hikvision', 'ОхранаВидео'));
+  assert.deepEqual(ritm.totals, {
+    equipmentSubtotal: 30000, discountAmount: 3000, equipmentAfterDiscount: 27000,
+    installation: 7000, oneTime: 34000, monthlyFee: 3500, materialLiability: 100000,
+  });
+  assert.deepEqual(video.totals, {
+    equipmentSubtotal: 20000, discountAmount: 2000, equipmentAfterDiscount: 18000,
+    installation: 7000, oneTime: 25000, monthlyFee: 3500, materialLiability: 100000,
+  });
+  assert.notEqual(ritm.totals.equipmentSubtotal, proposal.computed.equipment.subtotal);
+  assert.notEqual(ritm.totals.oneTime, proposal.computed.oneTime.final);
+});
+
+test('client contacts are strictly normalized and included only when supplied', () => {
+  const populated = normalizeProposal(fixture({ client: { name: 'ООО «Северный дом»', phone: '+7 999 111-22-33', email: 'client@example.test' } }), group());
+  assert.equal(populated.clientPhone, '+7 999 111-22-33');
+  assert.equal(populated.clientEmail, 'client@example.test');
+  const empty = normalizeProposal(fixture(), group());
+  assert.equal(empty.clientPhone, '');
+  assert.equal(empty.clientEmail, '');
+  assert.throws(() => normalizeProposal(fixture({ client: { name: 'Клиент', phone: { secret: true } } }), group()), /client\.phone.*scalar/i);
+  assert.throws(() => normalizeProposal(fixture({ client: { name: 'Клиент', email: 'x'.repeat(201) } }), group()), /client\.email.*too long/i);
+});
+
+test('a long proposal creates continuation pages with repeated logo and table header drawing operations', async () => {
+  const items = Array.from({ length: 70 }, (_, index) => ({ system: 'ritm', systemLabel: 'РИТМ', code: 'R-' + index, name: 'Длинное наименование охранного оборудования ' + index, model: 'Модель ' + index, unit: 'шт.', quantity: 1, installedUnitPrice: 1000 }));
+  const buffer = await buildProposalPdf(fixture({ items }), group());
+  const source = buffer.toString('latin1');
+  const pages = (source.match(/\/Type \/Page\b/g) || []).length;
+  const logoDraws = (source.match(/\/I\d+ Do/g) || []).length;
+  assert.ok(pages >= 4, 'expected at least four PDF pages');
+  assert.ok(logoDraws >= pages, 'every page must draw the CESAR logo');
 });
